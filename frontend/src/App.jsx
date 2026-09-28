@@ -301,11 +301,11 @@ function App() {
                 />
               </div>
               <button 
-                onClick={() => handleCheckout('Card')}
+                onClick={() => handleCheckout('Combined Payment')}
                 disabled={cart.length === 0}
                 className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white py-4 rounded-xl font-bold text-lg shadow-lg shadow-indigo-200 transition-all active:scale-[0.98]"
               >
-                Pay Now
+                Combine Payment
               </button>
             </div>
           </aside>
