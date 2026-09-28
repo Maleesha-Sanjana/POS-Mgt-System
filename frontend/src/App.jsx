@@ -14,6 +14,9 @@ function App() {
   const [activeCategory, setActiveCategory] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [cart, setCart] = useState([]);
+  const [cashModalOpen, setCashModalOpen] = useState(false);
+  const [selectedCustomerId, setSelectedCustomerId] = useState('');
+  const [cashReceived, setCashReceived] = useState('');
 
   // Filter products based on category and search query for POS view
   const filteredProducts = useMemo(() => {
@@ -65,6 +68,19 @@ function App() {
     alert(`Payment of Rs. ${total.toFixed(2)} processed via ${method} successfully!\nReceipt printing...`);
     setCart([]);
   };
+
+  const openCashModal = () => {
+    setCashReceived(total.toFixed(2));
+    setCashModalOpen(true);
+  };
+
+  const completeCashPayment = () => {
+    if (Number(cashReceived) < total) return;
+    setCashModalOpen(false);
+    handleCheckout('Cash');
+  };
+
+  const selectedCustomer = mockCustomers.find(customer => customer.id === selectedCustomerId);
 
   return (
     <div className="flex h-screen bg-slate-50 font-sans overflow-hidden">
@@ -268,7 +284,7 @@ function App() {
                 <PaymentButton 
                   icon={<Banknote size={20} />} 
                   label="Cash" 
-                  onClick={() => handleCheckout('Cash')}
+                  onClick={openCashModal}
                   disabled={cart.length === 0}
                 />
                 <PaymentButton 
@@ -294,6 +310,79 @@ function App() {
             </div>
           </aside>
         </>
+      )}
+
+      {cashModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setCashModalOpen(false);
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="cash-payment-title"
+            className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl"
+          >
+            <div className="mb-5">
+              <h2 id="cash-payment-title" className="text-xl font-bold text-slate-800">Cash payment</h2>
+              <p className="mt-1 text-sm text-slate-500">Review the customer balance and enter the cash received.</p>
+            </div>
+
+            <label htmlFor="cash-customer" className="mb-2 block text-sm font-semibold text-slate-700">Customer</label>
+            <select
+              id="cash-customer"
+              value={selectedCustomerId}
+              onChange={(event) => setSelectedCustomerId(event.target.value)}
+              className="mb-4 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="">Walk-in customer</option>
+              {mockCustomers.map(customer => (
+                <option key={customer.id} value={customer.id}>{customer.name}</option>
+              ))}
+            </select>
+
+            <div className="mb-5 flex items-center justify-between rounded-lg bg-slate-50 px-4 py-3">
+              <span className="text-sm text-slate-600">Customer balance</span>
+              <span className="font-semibold text-slate-800">Rs. {(selectedCustomer?.balance ?? 0).toFixed(2)}</span>
+            </div>
+
+            <div className="mb-4 flex items-center justify-between">
+              <label htmlFor="cash-received" className="text-sm font-semibold text-slate-700">Cash received</label>
+              <span className="text-sm font-bold text-indigo-600">Amount due: Rs. {total.toFixed(2)}</span>
+            </div>
+            <input
+              id="cash-received"
+              type="number"
+              min={total}
+              step="0.01"
+              value={cashReceived}
+              onChange={(event) => setCashReceived(event.target.value)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            <div className="mt-3 flex justify-between text-sm">
+              <span className="text-slate-500">Change</span>
+              <span className="font-semibold text-slate-800">Rs. {Math.max(0, Number(cashReceived || 0) - total).toFixed(2)}</span>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => setCashModalOpen(false)}
+                className="rounded-lg border border-slate-300 px-4 py-2.5 font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={completeCashPayment}
+                disabled={Number(cashReceived) < total}
+                className="rounded-lg bg-indigo-600 px-4 py-2.5 font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                Complete payment
+              </button>
+            </div>
+          </section>
+        </div>
       )}
     </div>
   );

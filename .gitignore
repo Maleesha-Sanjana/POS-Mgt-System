@@ -1,0 +1,20 @@
+# .NET build output
+**/bin/
+**/obj/
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# IDE files
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+
+# Logs and local environment files
+*.log
+.env
+.env.*
+!.env.example
