@@ -7,6 +7,7 @@ import { mockProducts, mockCategories, mockOrders, mockCustomers } from './data'
 import ProductsView from './components/ProductsView';
 import OrdersView from './components/OrdersView';
 import CustomersView from './components/CustomersView';
+import SettingsView from './components/SettingsView';
 
 function App() {
   const [activeTab, setActiveTab] = useState('POS');
@@ -99,7 +100,12 @@ function App() {
             onClick={() => setActiveTab('Customers')} 
             label="Customers" 
           />
-          <NavItem icon={<Settings />} label="Settings" />
+          <NavItem 
+            icon={<Settings />} 
+            active={activeTab === 'Settings'} 
+            onClick={() => setActiveTab('Settings')} 
+            label="Settings" 
+          />
         </nav>
 
         <button className="p-3 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all">
@@ -114,6 +120,8 @@ function App() {
         <OrdersView orders={mockOrders} />
       ) : activeTab === 'Customers' ? (
         <CustomersView customers={mockCustomers} />
+      ) : activeTab === 'Settings' ? (
+        <SettingsView />
       ) : (
         <>
           {/* Main Content Area (POS) */}
