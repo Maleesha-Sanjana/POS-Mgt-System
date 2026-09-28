@@ -68,25 +68,109 @@ function App() {
   const totalCents = Math.round(total * 100);
   const selectedCustomer = mockCustomers.find(customer => customer.id === selectedCustomerId);
 
-  const recordCheckout = (method, payments) => {
+  const printReceiptPdf = async (order) => {
+    const receiptWindow = window.open('', '_blank');
+    const { jsPDF } = await import('jspdf');
+    const pdf = new jsPDF();
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const margin = 16;
+    let y = 20;
+
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(18);
+    pdf.text('PAYMENT RECEIPT', pageWidth / 2, y, { align: 'center' });
+    y += 10;
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(10);
+    pdf.text(`Order: ${order.id}`, margin, y);
+    pdf.text(`Date: ${new Date(order.date).toLocaleString()}`, margin, y + 6);
+    pdf.text(`Customer: ${order.customer}`, margin, y + 12);
+    y += 22;
+
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('Item', margin, y);
+    pdf.text('Qty', pageWidth - 76, y, { align: 'right' });
+    pdf.text('Price', pageWidth - 48, y, { align: 'right' });
+    pdf.text('Amount', pageWidth - margin, y, { align: 'right' });
+    y += 3;
+    pdf.line(margin, y, pageWidth - margin, y);
+    y += 7;
+
+    pdf.setFont('helvetica', 'normal');
+    for (const item of order.cartItems) {
+      if (y > 265) {
+        pdf.addPage();
+        y = 20;
+      }
+      const itemName = pdf.splitTextToSize(item.name, pageWidth - 104);
+      pdf.text(itemName, margin, y);
+      pdf.text(String(item.quantity), pageWidth - 76, y, { align: 'right' });
+      pdf.text(`Rs. ${item.price.toFixed(2)}`, pageWidth - 48, y, { align: 'right' });
+      pdf.text(`Rs. ${(item.price * item.quantity).toFixed(2)}`, pageWidth - margin, y, { align: 'right' });
+      y += Math.max(7, itemName.length * 5);
+    }
+
+    y += 2;
+    pdf.line(margin, y, pageWidth - margin, y);
+    y += 8;
+    pdf.text(`Subtotal: Rs. ${order.subtotal.toFixed(2)}`, pageWidth - margin, y, { align: 'right' });
+    y += 6;
+    pdf.text(`Tax: Rs. ${order.tax.toFixed(2)}`, pageWidth - margin, y, { align: 'right' });
+    y += 6;
+    pdf.text(`Total: Rs. ${order.total.toFixed(2)}`, pageWidth - margin, y, { align: 'right' });
+    y += 10;
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('Payments', margin, y);
+    y += 6;
+    pdf.setFont('helvetica', 'normal');
+    for (const payment of order.payments) {
+      pdf.text(`${payment.method}: Rs. ${payment.amount.toFixed(2)}`, margin, y);
+      y += 6;
+    }
+    if (order.cashTendered !== null) {
+      pdf.text(`Cash received: Rs. ${order.cashTendered.toFixed(2)}`, margin, y);
+      y += 6;
+      pdf.text(`Change: Rs. ${order.change.toFixed(2)}`, margin, y);
+      y += 6;
+    }
+    y += 8;
+    pdf.text('Thank you for your purchase!', pageWidth / 2, y, { align: 'center' });
+
+    pdf.autoPrint({ variant: 'non-conform' });
+    const receiptUrl = URL.createObjectURL(pdf.output('blob'));
+    if (!receiptWindow) {
+      pdf.save(`${order.id}-receipt.pdf`);
+      URL.revokeObjectURL(receiptUrl);
+      return;
+    }
+    receiptWindow.location.href = receiptUrl;
+    window.setTimeout(() => URL.revokeObjectURL(receiptUrl), 60000);
+  };
+
+  const recordCheckout = (method, payments, cashDetails = null) => {
     const order = {
       id: `ORD-${Date.now()}`,
       date: new Date().toISOString(),
       customer: selectedCustomer?.name ?? 'Walk-in',
+      cartItems: cart.map(({ id, name, price, quantity }) => ({ id, name, price, quantity })),
+      subtotal,
+      tax,
       total,
       method,
       status: 'Completed',
       items: cart.reduce((count, item) => count + item.quantity, 0),
       payments,
+      cashTendered: cashDetails?.tendered ?? null,
+      change: cashDetails?.change ?? 0,
     };
     setOrders(previousOrders => [order, ...previousOrders]);
+    printReceiptPdf(order);
     setCart([]);
   };
 
-  const handleCheckout = (method, payments = [{ method, amount: total }]) => {
+  const handleCheckout = (method, payments = [{ method, amount: total }], cashDetails = null) => {
     if (cart.length === 0) return;
-    alert(`Payment of Rs. ${total.toFixed(2)} processed via ${method} successfully!\nReceipt printing...`);
-    recordCheckout(method, payments);
+    recordCheckout(method, payments, cashDetails);
   };
 
   const openCashModal = () => {
@@ -97,7 +181,10 @@ function App() {
   const completeCashPayment = () => {
     if (Number(cashReceived) < total) return;
     setCashModalOpen(false);
-    handleCheckout('Cash');
+    handleCheckout('Cash', [{ method: 'Cash', amount: total }], {
+      tendered: Number(cashReceived),
+      change: Number(cashReceived) - total,
+    });
   };
 
   const openCombinedModal = () => {
