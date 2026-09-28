@@ -25,9 +25,9 @@ export const mockOrders = [
 ];
 
 export const mockCustomers = [
-  { id: "CUST-001", name: "John Doe", email: "john@example.com", phone: "+1 234-567-8900", points: 450, tier: "Gold", lastVisit: "2026-09-28" },
-  { id: "CUST-002", name: "Jane Smith", email: "jane.smith@example.com", phone: "+1 987-654-3210", points: 120, tier: "Silver", lastVisit: "2026-09-27" },
-  { id: "CUST-003", name: "Michael B.", email: "mike.b@example.com", phone: "+1 555-123-4567", points: 85, tier: "Bronze", lastVisit: "2026-09-25" },
-  { id: "CUST-004", name: "Sarah Connor", email: "sarah.c@example.com", phone: "+1 555-987-6543", points: 1250, tier: "Platinum", lastVisit: "2026-09-28" },
+  { id: "CUST-001", name: "John Doe", email: "john@example.com", phone: "+1 234-567-8900", points: 450, tier: "Gold", lastVisit: "2026-09-28", balance: 0 },
+  { id: "CUST-002", name: "Jane Smith", email: "jane.smith@example.com", phone: "+1 987-654-3210", points: 120, tier: "Silver", lastVisit: "2026-09-27", balance: 0 },
+  { id: "CUST-003", name: "Michael B.", email: "mike.b@example.com", phone: "+1 555-123-4567", points: 85, tier: "Bronze", lastVisit: "2026-09-25", balance: 0 },
+  { id: "CUST-004", name: "Sarah Connor", email: "sarah.c@example.com", phone: "+1 555-987-6543", points: 1250, tier: "Platinum", lastVisit: "2026-09-28", balance: 0 },
 ];
 
