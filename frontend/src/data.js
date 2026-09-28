@@ -14,3 +14,13 @@ export const mockProducts = [
 ];
 
 export const mockCategories = ["All", "Fruits", "Dairy", "Bakery", "Beverages"];
+
+export const mockOrders = [
+  { id: "ORD-1042", date: "2026-09-28T10:30:00", customer: "Walk-in", total: 15.50, method: "Cash", status: "Completed", items: 3 },
+  { id: "ORD-1043", date: "2026-09-28T11:15:00", customer: "John Doe", total: 42.80, method: "Card", status: "Completed", items: 5 },
+  { id: "ORD-1044", date: "2026-09-28T12:05:00", customer: "Walk-in", total: 8.00, method: "E-Wallet", status: "Completed", items: 1 },
+  { id: "ORD-1045", date: "2026-09-28T13:45:00", customer: "Jane Smith", total: 112.50, method: "Card", status: "Refunded", items: 12 },
+  { id: "ORD-1046", date: "2026-09-28T14:20:00", customer: "Walk-in", total: 24.00, method: "Cash", status: "Completed", items: 4 },
+  { id: "ORD-1047", date: "2026-09-28T15:10:00", customer: "Michael B.", total: 6.50, method: "E-Wallet", status: "Completed", items: 2 },
+];
+
