@@ -3,8 +3,9 @@ import {
   Search, Grid, Tag, ShoppingCart, Users, Settings, 
   LogOut, Plus, Minus, Trash2, CreditCard, Banknote, Receipt 
 } from 'lucide-react';
-import { mockProducts, mockCategories } from './data';
+import { mockProducts, mockCategories, mockOrders } from './data';
 import ProductsView from './components/ProductsView';
+import OrdersView from './components/OrdersView';
 
 function App() {
   const [activeTab, setActiveTab] = useState('POS');
@@ -85,7 +86,12 @@ function App() {
             onClick={() => setActiveTab('Products')} 
             label="Products" 
           />
-          <NavItem icon={<ShoppingCart />} label="Orders" />
+          <NavItem 
+            icon={<ShoppingCart />} 
+            active={activeTab === 'Orders'} 
+            onClick={() => setActiveTab('Orders')} 
+            label="Orders" 
+          />
           <NavItem icon={<Users />} label="Customers" />
           <NavItem icon={<Settings />} label="Settings" />
         </nav>
@@ -98,6 +104,8 @@ function App() {
       {/* Tab Switching Logic */}
       {activeTab === 'Products' ? (
         <ProductsView products={mockProducts} />
+      ) : activeTab === 'Orders' ? (
+        <OrdersView orders={mockOrders} />
       ) : (
         <>
           {/* Main Content Area (POS) */}
