@@ -79,9 +79,14 @@ export default function OrdersView({ orders }) {
                       Rs. {order.total.toFixed(2)}
                     </td>
                     <td className="py-4 px-6">
-                      <span className="text-sm font-medium text-slate-600">
-                        {order.method}
-                      </span>
+                      <div className="text-sm font-medium text-slate-600">{order.method}</div>
+                      {order.payments?.length > 1 && (
+                        <div className="mt-1 flex flex-col gap-0.5 text-xs text-slate-500">
+                          {order.payments.map(payment => (
+                            <span key={payment.method}>{payment.method}: Rs. {payment.amount.toFixed(2)}</span>
+                          ))}
+                        </div>
+                      )}
                     </td>
                     <td className="py-4 px-6">
                       <span className={`px-3 py-1 rounded-full text-xs font-bold ${
