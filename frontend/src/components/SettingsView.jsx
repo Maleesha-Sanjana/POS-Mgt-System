@@ -102,10 +102,10 @@ function GeneralSettings() {
         <div className="grid grid-cols-2 gap-6">
           <div className="flex flex-col gap-2">
             <label className="text-sm font-semibold text-slate-700">Currency</label>
-            <select className="bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-indigo-500 outline-none text-slate-800 transition-all">
+            <select defaultValue="LKR" className="bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-indigo-500 outline-none text-slate-800 transition-all">
+              <option value="LKR">LKR (Rs.)</option>
               <option value="USD">USD ($)</option>
               <option value="EUR">EUR (€)</option>
-              <option value="GBP">GBP (£)</option>
             </select>
           </div>
           <div className="flex flex-col gap-2">

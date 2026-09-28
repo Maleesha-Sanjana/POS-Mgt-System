@@ -76,7 +76,7 @@ export default function OrdersView({ orders }) {
                       {order.items} {order.items === 1 ? 'item' : 'items'}
                     </td>
                     <td className="py-4 px-6 font-bold text-slate-800">
-                      ${order.total.toFixed(2)}
+                      Rs. {order.total.toFixed(2)}
                     </td>
                     <td className="py-4 px-6">
                       <span className="text-sm font-medium text-slate-600">
