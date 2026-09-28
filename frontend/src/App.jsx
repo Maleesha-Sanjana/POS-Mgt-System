@@ -3,9 +3,10 @@ import {
   Search, Grid, Tag, ShoppingCart, Users, Settings, 
   LogOut, Plus, Minus, Trash2, CreditCard, Banknote, Receipt 
 } from 'lucide-react';
-import { mockProducts, mockCategories, mockOrders } from './data';
+import { mockProducts, mockCategories, mockOrders, mockCustomers } from './data';
 import ProductsView from './components/ProductsView';
 import OrdersView from './components/OrdersView';
+import CustomersView from './components/CustomersView';
 
 function App() {
   const [activeTab, setActiveTab] = useState('POS');
@@ -92,7 +93,12 @@ function App() {
             onClick={() => setActiveTab('Orders')} 
             label="Orders" 
           />
-          <NavItem icon={<Users />} label="Customers" />
+          <NavItem 
+            icon={<Users />} 
+            active={activeTab === 'Customers'} 
+            onClick={() => setActiveTab('Customers')} 
+            label="Customers" 
+          />
           <NavItem icon={<Settings />} label="Settings" />
         </nav>
 
@@ -106,6 +112,8 @@ function App() {
         <ProductsView products={mockProducts} />
       ) : activeTab === 'Orders' ? (
         <OrdersView orders={mockOrders} />
+      ) : activeTab === 'Customers' ? (
+        <CustomersView customers={mockCustomers} />
       ) : (
         <>
           {/* Main Content Area (POS) */}
