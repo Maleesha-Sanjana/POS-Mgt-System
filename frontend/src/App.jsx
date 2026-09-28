@@ -14,7 +14,10 @@ function App() {
   const [activeCategory, setActiveCategory] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [cart, setCart] = useState([]);
+  const [orders, setOrders] = useState(mockOrders);
   const [cashModalOpen, setCashModalOpen] = useState(false);
+  const [combinedModalOpen, setCombinedModalOpen] = useState(false);
+  const [paymentSplits, setPaymentSplits] = useState([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [cashReceived, setCashReceived] = useState('');
 
@@ -62,11 +65,28 @@ function App() {
   const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
   const tax = subtotal * 0.08; // 8% tax
   const total = subtotal + tax;
+  const totalCents = Math.round(total * 100);
+  const selectedCustomer = mockCustomers.find(customer => customer.id === selectedCustomerId);
 
-  const handleCheckout = (method) => {
+  const recordCheckout = (method, payments) => {
+    const order = {
+      id: `ORD-${Date.now()}`,
+      date: new Date().toISOString(),
+      customer: selectedCustomer?.name ?? 'Walk-in',
+      total,
+      method,
+      status: 'Completed',
+      items: cart.reduce((count, item) => count + item.quantity, 0),
+      payments,
+    };
+    setOrders(previousOrders => [order, ...previousOrders]);
+    setCart([]);
+  };
+
+  const handleCheckout = (method, payments = [{ method, amount: total }]) => {
     if (cart.length === 0) return;
     alert(`Payment of Rs. ${total.toFixed(2)} processed via ${method} successfully!\nReceipt printing...`);
-    setCart([]);
+    recordCheckout(method, payments);
   };
 
   const openCashModal = () => {
@@ -80,7 +100,34 @@ function App() {
     handleCheckout('Cash');
   };
 
-  const selectedCustomer = mockCustomers.find(customer => customer.id === selectedCustomerId);
+  const openCombinedModal = () => {
+    setPaymentSplits([
+      { id: 1, method: 'Cash', amount: '' },
+      { id: 2, method: 'Card', amount: '' },
+    ]);
+    setCombinedModalOpen(true);
+  };
+
+  const splitTotalCents = paymentSplits.reduce(
+    (sum, split) => sum + Math.round((Number(split.amount) || 0) * 100),
+    0
+  );
+  const positiveSplits = paymentSplits.filter(split => Number(split.amount) > 0);
+  const splitMethodsAreUnique = new Set(positiveSplits.map(split => split.method)).size === positiveSplits.length;
+  const splitPaymentIsValid = positiveSplits.length >= 2
+    && splitMethodsAreUnique
+    && splitTotalCents === totalCents;
+
+  const completeCombinedPayment = () => {
+    if (!splitPaymentIsValid || cart.length === 0) return;
+    const payments = positiveSplits.map(split => ({
+      method: split.method,
+      amount: Math.round(Number(split.amount) * 100) / 100,
+    }));
+    const methodSummary = payments.map(payment => payment.method).join(' + ');
+    setCombinedModalOpen(false);
+    handleCheckout(methodSummary, payments);
+  };
 
   return (
     <div className="flex h-screen bg-slate-50 font-sans overflow-hidden">
@@ -133,7 +180,7 @@ function App() {
       {activeTab === 'Products' ? (
         <ProductsView products={mockProducts} />
       ) : activeTab === 'Orders' ? (
-        <OrdersView orders={mockOrders} />
+        <OrdersView orders={orders} />
       ) : activeTab === 'Customers' ? (
         <CustomersView customers={mockCustomers} />
       ) : activeTab === 'Settings' ? (
@@ -301,7 +348,7 @@ function App() {
                 />
               </div>
               <button 
-                onClick={() => handleCheckout('Combined Payment')}
+                onClick={openCombinedModal}
                 disabled={cart.length === 0}
                 className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white py-4 rounded-xl font-bold text-lg shadow-lg shadow-indigo-200 transition-all active:scale-[0.98]"
               >
@@ -376,6 +423,143 @@ function App() {
               <button
                 onClick={completeCashPayment}
                 disabled={Number(cashReceived) < total}
+                className="rounded-lg bg-indigo-600 px-4 py-2.5 font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                Complete payment
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {combinedModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setCombinedModalOpen(false);
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="combined-payment-title"
+            className="w-full max-w-lg rounded-xl bg-white p-6 shadow-2xl"
+          >
+            <div className="mb-5">
+              <h2 id="combined-payment-title" className="text-xl font-bold text-slate-800">Combine payment methods</h2>
+              <p className="mt-1 text-sm text-slate-500">Split this order across two or more payment methods.</p>
+            </div>
+
+            <label htmlFor="combined-customer" className="mb-2 block text-sm font-semibold text-slate-700">Customer</label>
+            <select
+              id="combined-customer"
+              value={selectedCustomerId}
+              onChange={(event) => setSelectedCustomerId(event.target.value)}
+              className="mb-5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="">Walk-in customer</option>
+              {mockCustomers.map(customer => (
+                <option key={customer.id} value={customer.id}>{customer.name}</option>
+              ))}
+            </select>
+
+            <div className="mb-3 grid grid-cols-[1fr_9rem_2.5rem] gap-2 text-xs font-semibold uppercase text-slate-500">
+              <span>Payment method</span>
+              <span>Amount (Rs.)</span>
+              <span className="sr-only">Remove</span>
+            </div>
+            <div className="flex flex-col gap-3">
+              {paymentSplits.map(split => {
+                const availableMethods = ['Cash', 'Card', 'E-Wallet'].filter(method =>
+                  method === split.method || !paymentSplits.some(other => other.id !== split.id && other.method === method)
+                );
+                return (
+                  <div key={split.id} className="grid grid-cols-[1fr_9rem_2.5rem] items-center gap-2">
+                    <select
+                      aria-label={`Payment method ${split.id}`}
+                      value={split.method}
+                      onChange={(event) => setPaymentSplits(previous => previous.map(item =>
+                        item.id === split.id ? { ...item, method: event.target.value } : item
+                      ))}
+                      className="min-w-0 rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500"
+                    >
+                      {availableMethods.map(method => <option key={method}>{method}</option>)}
+                    </select>
+                    <input
+                      aria-label={`${split.method} amount`}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={split.amount}
+                      onChange={(event) => setPaymentSplits(previous => previous.map(item =>
+                        item.id === split.id ? { ...item, amount: event.target.value } : item
+                      ))}
+                      placeholder="0.00"
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-right text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <button
+                      type="button"
+                      aria-label={`Remove ${split.method}`}
+                      title={`Remove ${split.method}`}
+                      disabled={paymentSplits.length <= 2}
+                      onClick={() => setPaymentSplits(previous => previous.filter(item => item.id !== split.id))}
+                      className="flex h-10 w-10 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+
+            {paymentSplits.length < 3 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const nextMethod = ['Cash', 'Card', 'E-Wallet'].find(method =>
+                    !paymentSplits.some(split => split.method === method)
+                  );
+                  if (nextMethod) {
+                    setPaymentSplits(previous => [...previous, {
+                      id: Math.max(...previous.map(split => split.id), 0) + 1,
+                      method: nextMethod,
+                      amount: '',
+                    }]);
+                  }
+                }}
+                className="mt-3 flex items-center gap-2 text-sm font-semibold text-indigo-600 hover:text-indigo-700"
+              >
+                <Plus size={16} /> Add payment method
+              </button>
+            )}
+
+            <div className="mt-5 rounded-lg bg-slate-50 p-4">
+              <div className="flex justify-between text-sm text-slate-600">
+                <span>Order total</span>
+                <span className="font-semibold text-slate-800">Rs. {total.toFixed(2)}</span>
+              </div>
+              <div className="mt-2 flex justify-between text-sm">
+                <span className="text-slate-600">Allocated</span>
+                <span className="font-semibold text-slate-800">Rs. {(splitTotalCents / 100).toFixed(2)}</span>
+              </div>
+              <div className="mt-2 flex justify-between text-sm">
+                <span className="text-slate-600">Remaining</span>
+                <span className={`font-bold ${splitTotalCents === totalCents ? 'text-green-700' : 'text-amber-700'}`}>
+                  Rs. {((totalCents - splitTotalCents) / 100).toFixed(2)}
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => setCombinedModalOpen(false)}
+                className="rounded-lg border border-slate-300 px-4 py-2.5 font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={completeCombinedPayment}
+                disabled={!splitPaymentIsValid}
                 className="rounded-lg bg-indigo-600 px-4 py-2.5 font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
               >
                 Complete payment
