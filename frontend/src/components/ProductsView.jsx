@@ -66,7 +66,7 @@ export default function ProductsView({ products }) {
                     </span>
                   </td>
                   <td className="py-4 px-6 font-medium text-slate-700">
-                    ${product.price.toFixed(2)}
+                    Rs. {product.price.toFixed(2)}
                   </td>
                   <td className="py-4 px-6">
                     {product.stock > 20 ? (

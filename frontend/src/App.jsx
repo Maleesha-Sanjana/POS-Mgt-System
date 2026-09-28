@@ -62,7 +62,7 @@ function App() {
 
   const handleCheckout = (method) => {
     if (cart.length === 0) return;
-    alert(`Payment of $${total.toFixed(2)} processed via ${method} successfully!\nReceipt printing...`);
+    alert(`Payment of Rs. ${total.toFixed(2)} processed via ${method} successfully!\nReceipt printing...`);
     setCart([]);
   };
 
@@ -176,7 +176,7 @@ function App() {
                       {product.icon}
                     </div>
                     <h3 className="font-semibold text-slate-800 mb-1">{product.name}</h3>
-                    <p className="text-indigo-600 font-bold">${product.price.toFixed(2)}</p>
+                    <p className="text-indigo-600 font-bold">Rs. {product.price.toFixed(2)}</p>
                     <p className="text-xs text-slate-400 mt-2">{product.stock} in stock</p>
                   </div>
                 ))}
@@ -218,7 +218,7 @@ function App() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <h4 className="font-semibold text-slate-800 truncate">{item.name}</h4>
-                      <p className="text-indigo-600 font-medium">${item.price.toFixed(2)}</p>
+                      <p className="text-indigo-600 font-medium">Rs. {item.price.toFixed(2)}</p>
                     </div>
                     
                     {/* Quantity Controls */}
@@ -247,20 +247,20 @@ function App() {
               <div className="flex flex-col gap-3 mb-6">
                 <div className="flex justify-between text-slate-500">
                   <span>Subtotal</span>
-                  <span className="font-medium text-slate-800">${subtotal.toFixed(2)}</span>
+                  <span className="font-medium text-slate-800">Rs. {subtotal.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-slate-500">
                   <span>Tax (8%)</span>
-                  <span className="font-medium text-slate-800">${tax.toFixed(2)}</span>
+                  <span className="font-medium text-slate-800">Rs. {tax.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-slate-500">
                   <span>Discount</span>
-                  <span className="font-medium text-slate-800">-$0.00</span>
+                  <span className="font-medium text-slate-800">-Rs. 0.00</span>
                 </div>
                 <div className="h-px bg-slate-200 my-2"></div>
                 <div className="flex justify-between items-center">
                   <span className="text-lg font-bold text-slate-800">Total</span>
-                  <span className="text-3xl font-black text-indigo-600">${total.toFixed(2)}</span>
+                  <span className="text-3xl font-black text-indigo-600">Rs. {total.toFixed(2)}</span>
                 </div>
               </div>
 
