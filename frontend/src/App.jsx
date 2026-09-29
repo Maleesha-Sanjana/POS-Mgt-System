@@ -265,7 +265,7 @@ function App() {
 
       {/* Tab Switching Logic */}
       {activeTab === 'Products' ? (
-        <ProductsView products={mockProducts} />
+        <ProductsView products={mockProducts} categories={mockCategories} />
       ) : activeTab === 'Orders' ? (
         <OrdersView orders={orders} />
       ) : activeTab === 'Customers' ? (

@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import { Plus, Search, Edit2, Trash2, AlertCircle } from 'lucide-react';
 
-export default function ProductsView({ products }) {
+export default function ProductsView({ products, categories }) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeCategory, setActiveCategory] = useState('All');
 
   const filteredProducts = products.filter(product => 
-    product.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    product.category.toLowerCase().includes(searchQuery.toLowerCase())
+    (activeCategory === 'All' || product.category === activeCategory) &&
+    (product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      product.category.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
   return (
@@ -38,6 +40,23 @@ export default function ProductsView({ products }) {
 
       {/* Main Content */}
       <div className="flex-1 p-8 overflow-y-auto">
+        <div className="mb-6 flex gap-3 overflow-x-auto pb-2">
+          {categories.map(category => (
+            <button
+              key={category}
+              type="button"
+              aria-pressed={activeCategory === category}
+              onClick={() => setActiveCategory(category)}
+              className={`whitespace-nowrap rounded-full border px-5 py-2 text-sm font-medium transition-colors ${
+                activeCategory === category
+                  ? 'border-indigo-600 bg-indigo-600 text-white'
+                  : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-300 hover:bg-indigo-50'
+              }`}
+            >
+              {category}
+            </button>
+          ))}
+        </div>
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
           <table className="w-full text-left border-collapse">
             <thead>
