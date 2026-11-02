@@ -1,0 +1,13 @@
+{
+  "DatabaseConfig": {
+    "ConnectionString": "Server=localhost;Database=PosManagementDb;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=True;",
+    "CommandTimeoutSeconds": 30,
+    "EnableSensitiveDataLogging": false,
+    "_ConnectionExamples": {
+      "DefaultLocalSqlServer": "Server=localhost;Database=PosManagementDb;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=True;",
+      "SqlExpress": "Server=.\\SQLEXPRESS;Database=PosManagementDb;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=True;",
+      "LocalDB": "Server=(localdb)\\MSSQLLocalDB;Database=PosManagementDb;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=True;",
+      "SqlAuthUserPassword": "Server=localhost;Database=PosManagementDb;User Id=sa;Password=YourPasswordHere;TrustServerCertificate=True;MultipleActiveResultSets=True;"
+    }
+  }
+}
