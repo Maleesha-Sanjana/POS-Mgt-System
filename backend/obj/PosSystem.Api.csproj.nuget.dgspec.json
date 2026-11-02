@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "d:\\visual studio projects\\POS-Mgt-System\\backend\\PosSystem.Api.csproj": {}
+    "D:\\visual studio projects\\POS-Mgt-System\\backend\\PosSystem.Api.csproj": {}
   },
   "projects": {
-    "d:\\visual studio projects\\POS-Mgt-System\\backend\\PosSystem.Api.csproj": {
+    "D:\\visual studio projects\\POS-Mgt-System\\backend\\PosSystem.Api.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "d:\\visual studio projects\\POS-Mgt-System\\backend\\PosSystem.Api.csproj",
+        "projectUniqueName": "D:\\visual studio projects\\POS-Mgt-System\\backend\\PosSystem.Api.csproj",
         "projectName": "PosSystem.Api",
-        "projectPath": "d:\\visual studio projects\\POS-Mgt-System\\backend\\PosSystem.Api.csproj",
+        "projectPath": "D:\\visual studio projects\\POS-Mgt-System\\backend\\PosSystem.Api.csproj",
         "packagesPath": "C:\\Users\\USER\\.nuget\\packages\\",
-        "outputPath": "d:\\visual studio projects\\POS-Mgt-System\\backend\\obj\\",
+        "outputPath": "D:\\visual studio projects\\POS-Mgt-System\\backend\\obj\\",
         "projectStyle": "PackageReference",
         "fallbackFolders": [
           "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
@@ -25,8 +25,7 @@
           "net8.0"
         ],
         "sources": {
-          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
-          "https://api.nuget.org/v3/index.json": {}
+          "C:\\Users\\USER\\.nuget\\packages": {}
         },
         "frameworks": {
           "net8.0": {
@@ -55,6 +54,10 @@
             "Microsoft.AspNetCore.OpenApi": {
               "target": "Package",
               "version": "[8.0.22, )"
+            },
+            "Microsoft.EntityFrameworkCore.SqlServer": {
+              "target": "Package",
+              "version": "[8.0.6, )"
             },
             "Swashbuckle.AspNetCore": {
               "target": "Package",
