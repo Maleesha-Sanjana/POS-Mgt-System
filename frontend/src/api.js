@@ -106,3 +106,4 @@ export const posApi = {
   getReportsSummary: () => request('/api/reports/summary'),
   getAuditLogs: () => request('/api/audit-logs'),
 };
+

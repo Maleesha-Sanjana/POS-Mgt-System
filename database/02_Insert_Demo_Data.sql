@@ -280,3 +280,4 @@ SET IDENTITY_INSERT dbo.AuditLogs OFF;
 COMMIT TRANSACTION;
 PRINT 'Demo seed data inserted successfully into PosManagementDb.';
 GO
+

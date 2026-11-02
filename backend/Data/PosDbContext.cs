@@ -39,3 +39,4 @@ public class PosDbContext : DbContext
         modelBuilder.Entity<Refund>().HasIndex(r => r.RefundNumber).IsUnique();
     }
 }
+

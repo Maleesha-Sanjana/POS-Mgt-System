@@ -333,3 +333,4 @@ GO
 
 PRINT 'PosManagementDb schema created successfully.';
 GO
+

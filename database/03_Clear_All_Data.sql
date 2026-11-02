@@ -42,3 +42,4 @@ DBCC CHECKIDENT ('dbo.Roles', RESEED, 0);
 COMMIT TRANSACTION;
 PRINT 'All data cleared from PosManagementDb.';
 GO
+
