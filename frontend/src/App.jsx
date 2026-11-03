@@ -211,278 +211,166 @@ function App() {
   const totalCents = Math.round(total * 100);
   const selectedCustomer = customers.find((customer) => customer.id === selectedCustomerId);
 
+  // Generates an 80mm receipt PDF and opens it in a browser tab (no auto print dialog).
+  // Pass a pre-opened window (opened synchronously on click) to avoid popup blockers.
   const printReceiptPdf = useCallback(
-    (order) => {
-      if (!order) return;
-
-      const escapeHtml = (val) =>
-        String(val ?? '')
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/"/g, '&quot;');
-
-      const storeName = escapeHtml(storeSettings?.storeName || 'FRESHMART SUPERMARKET');
-      const branchCode = storeSettings?.branchCode ? ` (${escapeHtml(storeSettings.branchCode)})` : '';
-      const storeAddress = escapeHtml(
-        storeSettings?.storeAddress || 'No. 142, Galle Road, Colombo 03'
-      );
-      const storePhone = escapeHtml(storeSettings?.phone || '+94 11 234 5678');
-      const footerText = escapeHtml(
-        storeSettings?.receiptFooterText || 'Thank you for your purchase!'
-      );
-
-      const orderId = escapeHtml(order.id || order.orderNumber || 'ORD-NEW');
-      const orderDate = order.date ? new Date(order.date).toLocaleString() : new Date().toLocaleString();
-      const customerName = escapeHtml(order.customer || order.customerName || 'Walk-in');
-      const cashierDisplay = escapeHtml(
-        `${currentUser?.fullName || 'Staff'} (${currentUser?.role || 'Cashier'})`
-      );
-      const orderStatus = String(order.status || 'Completed');
-
-      const rawItems = Array.isArray(order.cartItems) ? order.cartItems : [];
-      const normalizedItems =
-        rawItems.length > 0
-          ? rawItems.map((item) => {
-              const name = item.name || item.productName || 'Item';
-              const qty = Number(item.quantity ?? 1);
-              const price = Number(item.price ?? item.unitPrice ?? 0);
-              const amount = Number(item.lineTotal ?? price * qty);
-              return { name, qty, price, amount };
-            })
-          : [
-              {
-                name: `Order Items (${Number(order.items || 1)})`,
-                qty: Number(order.items || 1),
-                price: Number(order.subtotal ?? order.total ?? 0) / Math.max(1, Number(order.items || 1)),
-                amount: Number(order.subtotal ?? order.total ?? 0),
-              },
-            ];
-
-      const rawPayments = Array.isArray(order.payments) && order.payments.length > 0
-        ? order.payments
-        : [{ method: order.method || 'Cash', amount: order.total ?? 0 }];
-
-      const subtotalVal = Number(order.subtotal ?? order.total ?? 0);
-      const discountVal = Number(order.discountAmount ?? 0);
-      const taxVal = Number(order.tax ?? 0);
-      const totalVal = Number(order.total ?? 0);
-      const hasCashTendered =
-        order.cashTendered !== null &&
-        order.cashTendered !== undefined &&
-        Number(order.cashTendered) > 0;
-
-      const itemsRowsHtml = normalizedItems
-        .map(
-          (it) => `
-          <tr>
-            <td class="col-item">${escapeHtml(it.name)}</td>
-            <td class="col-qty">${it.qty}</td>
-            <td class="col-price">${it.price.toFixed(2)}</td>
-            <td class="col-amt">${it.amount.toFixed(2)}</td>
-          </tr>`
-        )
-        .join('');
-
-      const paymentsRowsHtml = rawPayments
-        .map(
-          (p) => `
-          <div class="row">
-            <span>${escapeHtml(p.method || p.paymentMethod || 'Payment')}</span>
-            <span>Rs. ${Number(p.amount ?? 0).toFixed(2)}</span>
-          </div>`
-        )
-        .join('');
-
-      // Low-power monochrome thermal HTML (zero solid fills, low dot-density dashed separators, 80mm roll ready)
-      const receiptHtml = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Receipt ${orderId}</title>
-  <style>
-    @page {
-      size: 80mm auto;
-      margin: 2mm;
-    }
-    * {
-      box-sizing: border-box;
-      color: #000 !important;
-      background: transparent !important;
-      box-shadow: none !important;
-      text-shadow: none !important;
-    }
-    html, body {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      max-width: 76mm;
-      font-family: 'Courier New', Courier, monospace;
-      font-size: 11px;
-      line-height: 1.35;
-      font-weight: 400;
-    }
-    .receipt {
-      padding: 2mm 1mm;
-    }
-    .center {
-      text-align: center;
-    }
-    .store-title {
-      font-size: 13px;
-      font-weight: 700;
-      letter-spacing: 0.5px;
-    }
-    .sub-line {
-      font-size: 10px;
-    }
-    .sep {
-      border: 0;
-      border-top: 1px dashed #000;
-      margin: 5px 0;
-    }
-    .row {
-      display: flex;
-      justify-content: space-between;
-      gap: 6px;
-      margin: 2px 0;
-    }
-    .bold {
-      font-weight: 700;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin: 3px 0;
-    }
-    th, td {
-      padding: 2px 0;
-      vertical-align: top;
-      font-size: 10.5px;
-    }
-    th {
-      border-bottom: 1px dashed #000;
-      font-weight: 700;
-      text-align: left;
-    }
-    .col-item {
-      width: 44%;
-      word-break: break-word;
-      padding-right: 3px;
-    }
-    .col-qty {
-      width: 12%;
-      text-align: right;
-    }
-    .col-price {
-      width: 22%;
-      text-align: right;
-    }
-    .col-amt {
-      width: 22%;
-      text-align: right;
-    }
-    .total-line {
-      font-size: 12.5px;
-      font-weight: 700;
-      padding: 3px 0;
-      border-top: 1px dashed #000;
-      border-bottom: 1px dashed #000;
-      margin: 4px 0;
-    }
-    .footer {
-      margin-top: 8px;
-      font-size: 10px;
-      text-align: center;
-    }
-  </style>
-</head>
-<body>
-  <div class="receipt">
-    <div class="center store-title">${storeName}${branchCode}</div>
-    <div class="center sub-line">${storeAddress}</div>
-    <div class="center sub-line">Tel: ${storePhone}</div>
-    <div class="center bold" style="margin-top:3px;">
-      ${orderStatus === 'Refunded' ? '*** REFUND RECEIPT ***' : '--- SALES RECEIPT (LOW-POWER MODE) ---'}
-    </div>
-    <hr class="sep" />
-    <div class="row"><span>Invoice:</span><span class="bold">${orderId}</span></div>
-    <div class="row"><span>Date:</span><span>${escapeHtml(orderDate)}</span></div>
-    <div class="row"><span>Customer:</span><span>${customerName}</span></div>
-    <div class="row"><span>Cashier:</span><span>${cashierDisplay}</span></div>
-    <div class="row"><span>Status:</span><span>${escapeHtml(orderStatus)}</span></div>
-    <hr class="sep" />
-    <table>
-      <thead>
-        <tr>
-          <th class="col-item">Item</th>
-          <th class="col-qty">Qty</th>
-          <th class="col-price">Price</th>
-          <th class="col-amt">Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${itemsRowsHtml}
-      </tbody>
-    </table>
-    <hr class="sep" />
-    <div class="row"><span>Subtotal</span><span>Rs. ${subtotalVal.toFixed(2)}</span></div>
-    ${
-      discountVal > 0
-        ? `<div class="row"><span>Discount</span><span>-Rs. ${discountVal.toFixed(2)}</span></div>`
-        : ''
-    }
-    <div class="row"><span>Tax (${taxRatePercent}%)</span><span>Rs. ${taxVal.toFixed(2)}</span></div>
-    <div class="row total-line"><span>TOTAL</span><span>Rs. ${totalVal.toFixed(2)}</span></div>
-    <div class="bold" style="margin-top:4px;">Payment Details:</div>
-    ${paymentsRowsHtml}
-    ${
-      hasCashTendered
-        ? `<div class="row"><span>Cash Tendered</span><span>Rs. ${Number(order.cashTendered).toFixed(2)}</span></div>
-           <div class="row"><span>Change Given</span><span>Rs. ${Number(order.change ?? 0).toFixed(2)}</span></div>`
-        : ''
-    }
-    <hr class="sep" />
-    <div class="footer">${footerText}</div>
-  </div>
-</body>
-</html>`;
-
-      // Reuse a single lightweight hidden iframe so printing never gets stuck or blocked by popup blockers
-      let printFrame = document.getElementById('pos-low-power-print-frame');
-      if (printFrame) {
-        printFrame.remove();
+    async (order, preOpenedWindow = null) => {
+      if (!order) {
+        if (preOpenedWindow && !preOpenedWindow.closed) preOpenedWindow.close();
+        return;
       }
-      printFrame = document.createElement('iframe');
-      printFrame.id = 'pos-low-power-print-frame';
-      printFrame.title = 'POS Low Power Receipt Printer';
-      printFrame.style.position = 'fixed';
-      printFrame.style.right = '0';
-      printFrame.style.bottom = '0';
-      printFrame.style.width = '0';
-      printFrame.style.height = '0';
-      printFrame.style.border = '0';
-      printFrame.style.visibility = 'hidden';
-      document.body.appendChild(printFrame);
-
-      const frameDoc = printFrame.contentWindow?.document || printFrame.contentDocument;
-      if (!frameDoc) return;
-
-      frameDoc.open();
-      frameDoc.write(receiptHtml);
-      frameDoc.close();
-
-      // Trigger print asynchronously on the next tick so the POS UI never freezes or blocks
-      window.setTimeout(() => {
-        try {
-          if (printFrame.contentWindow) {
-            printFrame.contentWindow.focus();
-            printFrame.contentWindow.print();
-          }
-        } catch (err) {
-          console.error('Receipt print error:', err);
+      const receiptWindow = preOpenedWindow || window.open('', '_blank');
+      try {
+        if (receiptWindow && !receiptWindow.closed) {
+          receiptWindow.document.title = 'Generating receipt...';
+          receiptWindow.document.body.innerHTML = '<p style="font-family:sans-serif">Generating receipt...</p>';
         }
-      }, 60);
+        const { jsPDF } = await import('jspdf');
+
+        const money = (v) => `Rs. ${Number(v ?? 0).toFixed(2)}`;
+        const rawItems = Array.isArray(order.cartItems) ? order.cartItems : [];
+        const items =
+          rawItems.length > 0
+            ? rawItems.map((item) => {
+                const qty = Number(item.quantity ?? 1);
+                const price = Number(item.price ?? item.unitPrice ?? 0);
+                return {
+                  name: String(item.name || item.productName || 'Item'),
+                  qty,
+                  price,
+                  amount: Number(item.lineTotal ?? price * qty),
+                };
+              })
+            : [
+                {
+                  name: `Order Items (${Number(order.items || 1)})`,
+                  qty: Number(order.items || 1),
+                  price: Number(order.subtotal ?? order.total ?? 0) / Math.max(1, Number(order.items || 1)),
+                  amount: Number(order.subtotal ?? order.total ?? 0),
+                },
+              ];
+        const payments =
+          Array.isArray(order.payments) && order.payments.length > 0
+            ? order.payments
+            : [{ method: order.method || 'Cash', amount: order.total ?? 0 }];
+        const hasCash =
+          order.cashTendered !== null &&
+          order.cashTendered !== undefined &&
+          Number(order.cashTendered) > 0;
+        const discountVal = Number(order.discountAmount ?? 0);
+
+        const W = 80;
+        const M = 4;
+        const R = W - M;
+        const nameWidth = 38;
+        const footer = storeSettings?.receiptFooterText || 'Thank you for your purchase!';
+
+        // Measure with a scratch doc to compute wrapped lines and total page height
+        const measure = new jsPDF({ unit: 'mm', format: [W, 200] });
+        measure.setFontSize(8);
+        const wrapped = items.map((it) => measure.splitTextToSize(it.name, nameWidth));
+        const footerLines = measure.splitTextToSize(footer, W - 2 * M);
+        const addrLines = measure.splitTextToSize(storeSettings?.storeAddress || '', W - 2 * M);
+        const itemLines = wrapped.reduce((n, l) => n + l.length, 0);
+        const height =
+          60 + addrLines.length * 3.6 + itemLines * 3.8 + items.length * 1 +
+          payments.length * 4 + (hasCash ? 8 : 0) + (discountVal > 0 ? 4 : 0) +
+          footerLines.length * 3.6 + 12;
+
+        const pdf = new jsPDF({ unit: 'mm', format: [W, Math.max(100, height)] });
+        let y = 8;
+        const center = (t, size = 8, bold = false) => {
+          pdf.setFont('courier', bold ? 'bold' : 'normal');
+          pdf.setFontSize(size);
+          pdf.text(t, W / 2, y, { align: 'center' });
+          y += size * 0.5;
+        };
+        const row = (l, r, bold = false) => {
+          pdf.setFont('courier', bold ? 'bold' : 'normal');
+          pdf.setFontSize(8);
+          pdf.text(l, M, y);
+          pdf.text(r, R, y, { align: 'right' });
+          y += 4;
+        };
+        const dash = () => {
+          pdf.setLineDashPattern([0.8, 0.8], 0);
+          pdf.setLineWidth(0.2);
+          pdf.line(M, y, R, y);
+          pdf.setLineDashPattern([], 0);
+          y += 3.5;
+        };
+
+        center(
+          `${storeSettings?.storeName || 'POS MANAGEMENT SYSTEM'}${
+            storeSettings?.branchCode ? ` (${storeSettings.branchCode})` : ''
+          }`,
+          11,
+          true
+        );
+        y += 1;
+        for (const line of addrLines) {
+          center(line, 7.5);
+          y -= 0.2;
+        }
+        if (storeSettings?.phone) center(`Tel: ${storeSettings.phone}`, 7.5);
+        y += 1;
+        center(order.status === 'Refunded' ? '*** REFUND RECEIPT ***' : 'SALES RECEIPT', 9, true);
+        y += 1;
+        dash();
+        row('Invoice:', String(order.id || order.orderNumber || ''), true);
+        row('Date:', (order.date ? new Date(order.date) : new Date()).toLocaleString());
+        row('Customer:', String(order.customer || order.customerName || 'Walk-in'));
+        row('Cashier:', `${currentUser?.fullName || 'Staff'}`);
+        row('Status:', String(order.status || 'Completed'));
+        dash();
+
+        pdf.setFont('courier', 'bold');
+        pdf.setFontSize(8);
+        pdf.text('Item', M, y);
+        pdf.text('Qty', 52, y, { align: 'right' });
+        pdf.text('Price', 65, y, { align: 'right' });
+        pdf.text('Total', R, y, { align: 'right' });
+        y += 4;
+        pdf.setFont('courier', 'normal');
+        items.forEach((it, i) => {
+          pdf.text(wrapped[i], M, y);
+          pdf.text(String(it.qty), 52, y, { align: 'right' });
+          pdf.text(it.price.toFixed(2), 65, y, { align: 'right' });
+          pdf.text(it.amount.toFixed(2), R, y, { align: 'right' });
+          y += wrapped[i].length * 3.8 + 1;
+        });
+        dash();
+
+        row('Subtotal', money(order.subtotal ?? order.total));
+        if (discountVal > 0) row('Discount', `-${money(discountVal)}`);
+        row(`Tax (${taxRatePercent}%)`, money(order.tax));
+        row('TOTAL', money(order.total), true);
+        dash();
+        pdf.setFont('courier', 'bold');
+        pdf.setFontSize(8);
+        pdf.text('Payment Details:', M, y);
+        y += 4;
+        payments.forEach((p) => row(String(p.method || p.paymentMethod || 'Payment'), money(p.amount)));
+        if (hasCash) {
+          row('Cash Tendered', money(order.cashTendered));
+          row('Change Given', money(order.change));
+        }
+        dash();
+        for (const line of footerLines) center(line, 7.5);
+
+        const url = URL.createObjectURL(pdf.output('blob'));
+        if (receiptWindow && !receiptWindow.closed) {
+          receiptWindow.location.href = url;
+        } else {
+          // Popup blocked: fall back to downloading the PDF
+          pdf.save(`${order.id || 'receipt'}.pdf`);
+        }
+        window.setTimeout(() => URL.revokeObjectURL(url), 5 * 60 * 1000);
+      } catch (err) {
+        console.error('Receipt PDF error:', err);
+        if (receiptWindow && !receiptWindow.closed) receiptWindow.close();
+        alert('Unable to generate receipt PDF.');
+      }
     },
     [storeSettings, currentUser, taxRatePercent]
   );
@@ -493,6 +381,12 @@ function App() {
     cashDetails = null
   ) => {
     if (cart.length === 0 || checkingOut) return;
+    // Open the receipt tab synchronously (inside the click) so popup blockers allow it
+    const receiptTab = window.open('', '_blank');
+    if (receiptTab) {
+      receiptTab.document.title = 'Processing sale...';
+      receiptTab.document.body.innerHTML = '<p style="font-family:sans-serif">Processing sale...</p>';
+    }
     setCheckingOut(true);
     try {
       const invoicedItems = cart.map(({ id, name, price, quantity }) => ({
@@ -526,7 +420,8 @@ function App() {
       setCart([]);
       setSelectedDiscountCode('');
       // Print receipt immediately in low-power non-blocking mode and refresh DB data in parallel
-      printReceiptPdf({
+      printReceiptPdf(
+        {
         ...savedOrder,
         cartItems:
           savedOrder?.cartItems?.length > 0
@@ -538,9 +433,12 @@ function App() {
             : payments,
         cashTendered: savedOrder?.cashTendered ?? cashDetails?.tendered ?? null,
         change: savedOrder?.change ?? cashDetails?.change ?? 0,
-      });
+        },
+        receiptTab
+      );
       await loadDatabaseData();
     } catch (err) {
+      if (receiptTab && !receiptTab.closed) receiptTab.close();
       alert(err.message || 'Checkout failed.');
     } finally {
       setCheckingOut(false);
