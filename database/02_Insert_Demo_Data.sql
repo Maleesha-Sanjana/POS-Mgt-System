@@ -48,7 +48,7 @@ DBCC CHECKIDENT ('dbo.Roles', RESEED, 0);
 SET IDENTITY_INSERT dbo.Roles ON;
 INSERT INTO dbo.Roles (Id, Name, Description) VALUES
 (1, N'Administrator', N'Full system access: user management, branch/tax settings, and audit logs.'),
-(2, N'Manager',       N'Store management: inventory, pricing, discounts, refunds, and reports.'),
+(2, N'Store Manager', N'Store management: inventory, pricing, discounts, refunds, and reports.'),
 (3, N'Cashier',       N'POS terminal operations: till sessions, billing, checkout, and receipts.');
 SET IDENTITY_INSERT dbo.Roles OFF;
 

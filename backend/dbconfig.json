@@ -1,14 +1,16 @@
 {
   "DatabaseConfig": {
-    "ConnectionString": "Server=localhost;Database=PosManagementDb;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=True;",
-    "CommandTimeoutSeconds": 30,
+    "ConnectionString": "Server=38.247.130.159,47182;Database=PosManagementDb;User Id=sa;Password=Corei7@2022!;Encrypt=False;TrustServerCertificate=True;MultipleActiveResultSets=True;",
+    "CommandTimeoutSeconds": 60,
     "EnableSensitiveDataLogging": false,
+    "_Server": "38.247.130.159",
+    "_Port": 47182,
+    "_User": "sa",
+    "_Database": "PosManagementDb",
     "_ConnectionExamples": {
+      "RemoteSqlServer": "Server=38.247.130.159,47182;Database=PosManagementDb;User Id=sa;Password=Corei7@2022!;Encrypt=False;TrustServerCertificate=True;MultipleActiveResultSets=True;",
       "DefaultLocalSqlServer": "Server=localhost;Database=PosManagementDb;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=True;",
-      "SqlExpress": "Server=.\\SQLEXPRESS;Database=PosManagementDb;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=True;",
-      "LocalDB": "Server=(localdb)\\MSSQLLocalDB;Database=PosManagementDb;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=True;",
-      "SqlAuthUserPassword": "Server=localhost;Database=PosManagementDb;User Id=sa;Password=YourPasswordHere;TrustServerCertificate=True;MultipleActiveResultSets=True;"
+      "SqlExpress": "Server=.\\SQLEXPRESS;Database=PosManagementDb;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=True;"
     }
   }
 }
-
