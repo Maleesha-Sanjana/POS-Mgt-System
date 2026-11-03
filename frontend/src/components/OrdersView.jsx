@@ -153,7 +153,7 @@ export default function OrdersView({ orders, onRefundOrder, onPrintReceipt }) {
                             type="button"
                             onClick={() => onPrintReceipt(order)}
                             className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                            title="Print PDF Receipt"
+                            title="Print Thermal Receipt (Low-Power)"
                           >
                             <Printer size={18} />
                           </button>
@@ -267,7 +267,7 @@ export default function OrdersView({ orders, onRefundOrder, onPrintReceipt }) {
                   className="rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 px-4 py-2 text-sm font-semibold flex items-center gap-2"
                 >
                   <Printer size={16} />
-                  Print Receipt PDF
+                  Print Receipt
                 </button>
               )}
               <button

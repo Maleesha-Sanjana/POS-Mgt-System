@@ -1,3 +1,5 @@
+using System.Threading;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using PosSystem.Api.Config;
 using PosSystem.Api.Data;
@@ -30,6 +32,9 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors();
+
+// Synchronization primitives for automatic database & table creation
+var schemaLock = new SemaphoreSlim(1, 1);
 
 // Helper to compute customer loyalty tier from points
 static string CalculateLoyaltyTier(int points) => points switch
@@ -72,10 +77,311 @@ static OrderDto MapOrderToDto(Order o) => new(
     )).ToList()
 );
 
-// Helper to ensure dbo.StockAdjustmentNotes table exists in SQL Server
-static async Task EnsureStockAdjustmentTableAsync(PosDbContext db)
+// Automatically ensures the destination database and all 14 required tables exist in SQL Server
+async Task EnsureDatabaseAndTablesAsync(PosDbContext db, DatabaseConfig config)
 {
-    const string createTableSql = @"
+    await schemaLock.WaitAsync();
+    try
+    {
+        // Step 1: Attempt to auto-create the destination database via master if it does not exist yet
+        try
+        {
+            var csb = new SqlConnectionStringBuilder(config.ConnectionString);
+            var targetDb = csb.InitialCatalog;
+            if (!string.IsNullOrWhiteSpace(targetDb))
+            {
+                csb.InitialCatalog = "master";
+                await using var masterConn = new SqlConnection(csb.ConnectionString);
+                await masterConn.OpenAsync();
+                await using var cmd = masterConn.CreateCommand();
+                cmd.CommandText = @"
+IF NOT EXISTS (SELECT name FROM sys.databases WHERE name = @dbName)
+BEGIN
+    DECLARE @sql NVARCHAR(MAX) = N'CREATE DATABASE [' + REPLACE(@dbName, N']', N']]') + N']';
+    EXEC(@sql);
+END";
+                cmd.Parameters.AddWithValue("@dbName", targetDb);
+                await cmd.ExecuteNonQueryAsync();
+            }
+        }
+        catch
+        {
+            // Ignore if the SQL login does not have permission on 'master' because the target DB already exists
+        }
+
+        // Step 2: Check and auto-create any missing tables in dependency order + essential seed rows
+        const string ensureAllTablesSql = @"
+-- 1. dbo.Roles
+IF OBJECT_ID('dbo.Roles', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Roles (
+        Id          INT IDENTITY(1,1) NOT NULL,
+        Name        NVARCHAR(50)      NOT NULL,
+        Description NVARCHAR(250)     NULL,
+        CreatedAt   DATETIME2         NOT NULL CONSTRAINT DF_Roles_CreatedAt DEFAULT (SYSUTCDATETIME()),
+        CONSTRAINT PK_Roles PRIMARY KEY CLUSTERED (Id),
+        CONSTRAINT UQ_Roles_Name UNIQUE (Name)
+    );
+END;
+
+-- 2. dbo.Users
+IF OBJECT_ID('dbo.Users', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Users (
+        Id           INT IDENTITY(1,1) NOT NULL,
+        Username     NVARCHAR(50)      NOT NULL,
+        FullName     NVARCHAR(100)     NOT NULL,
+        Email        NVARCHAR(150)     NOT NULL,
+        PasswordHash NVARCHAR(256)     NOT NULL,
+        RoleId       INT               NOT NULL,
+        IsActive     BIT               NOT NULL CONSTRAINT DF_Users_IsActive DEFAULT (1),
+        LastLoginAt  DATETIME2         NULL,
+        CreatedAt    DATETIME2         NOT NULL CONSTRAINT DF_Users_CreatedAt DEFAULT (SYSUTCDATETIME()),
+        CONSTRAINT PK_Users PRIMARY KEY CLUSTERED (Id),
+        CONSTRAINT UQ_Users_Username UNIQUE (Username),
+        CONSTRAINT UQ_Users_Email UNIQUE (Email),
+        CONSTRAINT FK_Users_Roles FOREIGN KEY (RoleId) REFERENCES dbo.Roles (Id)
+    );
+END;
+
+-- 3. dbo.StoreSettings
+IF OBJECT_ID('dbo.StoreSettings', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.StoreSettings (
+        Id                        INT IDENTITY(1,1) NOT NULL,
+        StoreName                 NVARCHAR(150)     NOT NULL,
+        BranchCode                NVARCHAR(50)      NOT NULL,
+        StoreAddress              NVARCHAR(300)     NOT NULL,
+        Phone                     NVARCHAR(50)      NOT NULL,
+        Email                     NVARCHAR(150)     NOT NULL,
+        Currency                  NVARCHAR(20)      NOT NULL CONSTRAINT DF_StoreSettings_Currency DEFAULT ('LKR (Rs.)'),
+        DefaultTaxRate            DECIMAL(5,2)      NOT NULL CONSTRAINT DF_StoreSettings_TaxRate DEFAULT (8.00),
+        LowStockThreshold         INT               NOT NULL CONSTRAINT DF_StoreSettings_LowStock DEFAULT (15),
+        LoyaltyPointsPerHundredRs INT               NOT NULL CONSTRAINT DF_StoreSettings_Loyalty DEFAULT (1),
+        ReceiptFooterText         NVARCHAR(300)     NULL,
+        ReceiptPrinterName        NVARCHAR(100)     NULL,
+        ReceiptPrinterConnected   BIT               NOT NULL CONSTRAINT DF_StoreSettings_Printer DEFAULT (1),
+        BarcodeScannerName        NVARCHAR(100)     NULL,
+        BarcodeScannerConnected   BIT               NOT NULL CONSTRAINT DF_StoreSettings_Scanner DEFAULT (1),
+        PaymentTerminalName       NVARCHAR(100)     NULL,
+        PaymentTerminalConnected  BIT               NOT NULL CONSTRAINT DF_StoreSettings_Terminal DEFAULT (1),
+        UpdatedAt                 DATETIME2         NOT NULL CONSTRAINT DF_StoreSettings_UpdatedAt DEFAULT (SYSUTCDATETIME()),
+        CONSTRAINT PK_StoreSettings PRIMARY KEY CLUSTERED (Id)
+    );
+END;
+
+-- 4. dbo.Categories
+IF OBJECT_ID('dbo.Categories', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Categories (
+        Id           INT IDENTITY(1,1) NOT NULL,
+        Name         NVARCHAR(100)     NOT NULL,
+        Description  NVARCHAR(250)     NULL,
+        DisplayOrder INT               NOT NULL CONSTRAINT DF_Categories_Order DEFAULT (0),
+        IsActive     BIT               NOT NULL CONSTRAINT DF_Categories_IsActive DEFAULT (1),
+        CreatedAt    DATETIME2         NOT NULL CONSTRAINT DF_Categories_CreatedAt DEFAULT (SYSUTCDATETIME()),
+        CONSTRAINT PK_Categories PRIMARY KEY CLUSTERED (Id),
+        CONSTRAINT UQ_Categories_Name UNIQUE (Name)
+    );
+END;
+
+-- 5. dbo.Products
+IF OBJECT_ID('dbo.Products', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Products (
+        Id           INT IDENTITY(1,1) NOT NULL,
+        Sku          NVARCHAR(50)      NOT NULL,
+        Barcode      NVARCHAR(50)      NOT NULL,
+        Name         NVARCHAR(150)     NOT NULL,
+        CategoryId   INT               NOT NULL,
+        Price        DECIMAL(18,2)     NOT NULL,
+        CostPrice    DECIMAL(18,2)     NOT NULL CONSTRAINT DF_Products_CostPrice DEFAULT (0.00),
+        Stock        INT               NOT NULL CONSTRAINT DF_Products_Stock DEFAULT (0),
+        ReorderLevel INT               NOT NULL CONSTRAINT DF_Products_Reorder DEFAULT (15),
+        Icon         NVARCHAR(30)      NOT NULL CONSTRAINT DF_Products_Icon DEFAULT (N'📦'),
+        Color        NVARCHAR(100)     NOT NULL CONSTRAINT DF_Products_Color DEFAULT ('bg-indigo-100 text-indigo-600'),
+        IsActive     BIT               NOT NULL CONSTRAINT DF_Products_IsActive DEFAULT (1),
+        CreatedAt    DATETIME2         NOT NULL CONSTRAINT DF_Products_CreatedAt DEFAULT (SYSUTCDATETIME()),
+        UpdatedAt    DATETIME2         NOT NULL CONSTRAINT DF_Products_UpdatedAt DEFAULT (SYSUTCDATETIME()),
+        CONSTRAINT PK_Products PRIMARY KEY CLUSTERED (Id),
+        CONSTRAINT UQ_Products_Sku UNIQUE (Sku),
+        CONSTRAINT UQ_Products_Barcode UNIQUE (Barcode),
+        CONSTRAINT FK_Products_Categories FOREIGN KEY (CategoryId) REFERENCES dbo.Categories (Id)
+    );
+    CREATE NONCLUSTERED INDEX IX_Products_CategoryId ON dbo.Products (CategoryId);
+    CREATE NONCLUSTERED INDEX IX_Products_Name ON dbo.Products (Name);
+END;
+
+-- 6. dbo.Customers
+IF OBJECT_ID('dbo.Customers', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Customers (
+        Id           INT IDENTITY(1,1) NOT NULL,
+        CustomerCode NVARCHAR(30)      NOT NULL,
+        Name         NVARCHAR(120)     NOT NULL,
+        Email        NVARCHAR(150)     NOT NULL,
+        Phone        NVARCHAR(40)      NOT NULL,
+        Points       INT               NOT NULL CONSTRAINT DF_Customers_Points DEFAULT (0),
+        Tier         NVARCHAR(30)      NOT NULL CONSTRAINT DF_Customers_Tier DEFAULT ('Bronze'),
+        Balance      DECIMAL(18,2)     NOT NULL CONSTRAINT DF_Customers_Balance DEFAULT (0.00),
+        LastVisit    DATETIME2         NULL,
+        IsActive     BIT               NOT NULL CONSTRAINT DF_Customers_IsActive DEFAULT (1),
+        CreatedAt    DATETIME2         NOT NULL CONSTRAINT DF_Customers_CreatedAt DEFAULT (SYSUTCDATETIME()),
+        CONSTRAINT PK_Customers PRIMARY KEY CLUSTERED (Id),
+        CONSTRAINT UQ_Customers_Code UNIQUE (CustomerCode)
+    );
+    CREATE NONCLUSTERED INDEX IX_Customers_Phone ON dbo.Customers (Phone);
+END;
+
+-- 7. dbo.Discounts
+IF OBJECT_ID('dbo.Discounts', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Discounts (
+        Id             INT IDENTITY(1,1) NOT NULL,
+        Code           NVARCHAR(40)      NOT NULL,
+        Name           NVARCHAR(120)     NOT NULL,
+        DiscountType   NVARCHAR(30)      NOT NULL,
+        Value          DECIMAL(18,2)     NOT NULL,
+        MinOrderAmount DECIMAL(18,2)     NOT NULL CONSTRAINT DF_Discounts_MinOrder DEFAULT (0.00),
+        IsActive       BIT               NOT NULL CONSTRAINT DF_Discounts_IsActive DEFAULT (1),
+        StartDate      DATETIME2         NULL,
+        EndDate        DATETIME2         NULL,
+        CONSTRAINT PK_Discounts PRIMARY KEY CLUSTERED (Id),
+        CONSTRAINT UQ_Discounts_Code UNIQUE (Code)
+    );
+END;
+
+-- 8. dbo.TillSessions
+IF OBJECT_ID('dbo.TillSessions', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.TillSessions (
+        Id           INT IDENTITY(1,1) NOT NULL,
+        UserId       INT               NOT NULL,
+        OpenedAt     DATETIME2         NOT NULL CONSTRAINT DF_TillSessions_OpenedAt DEFAULT (SYSUTCDATETIME()),
+        ClosedAt     DATETIME2         NULL,
+        OpeningFloat DECIMAL(18,2)     NOT NULL CONSTRAINT DF_TillSessions_OpeningFloat DEFAULT (0.00),
+        ClosingCash  DECIMAL(18,2)     NULL,
+        ExpectedCash DECIMAL(18,2)     NULL,
+        Variance     DECIMAL(18,2)     NULL,
+        Status       NVARCHAR(20)      NOT NULL CONSTRAINT DF_TillSessions_Status DEFAULT ('Open'),
+        Notes        NVARCHAR(250)     NULL,
+        CONSTRAINT PK_TillSessions PRIMARY KEY CLUSTERED (Id),
+        CONSTRAINT FK_TillSessions_Users FOREIGN KEY (UserId) REFERENCES dbo.Users (Id)
+    );
+END;
+
+-- 9. dbo.Orders
+IF OBJECT_ID('dbo.Orders', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Orders (
+        Id                   INT IDENTITY(1,1) NOT NULL,
+        OrderNumber          NVARCHAR(40)      NOT NULL,
+        OrderDate            DATETIME2         NOT NULL CONSTRAINT DF_Orders_OrderDate DEFAULT (SYSUTCDATETIME()),
+        CustomerId           INT               NULL,
+        CustomerName         NVARCHAR(120)     NOT NULL CONSTRAINT DF_Orders_CustomerName DEFAULT ('Walk-in'),
+        CashierUserId        INT               NOT NULL,
+        TillSessionId        INT               NULL,
+        DiscountId           INT               NULL,
+        Subtotal             DECIMAL(18,2)     NOT NULL,
+        DiscountAmount       DECIMAL(18,2)     NOT NULL CONSTRAINT DF_Orders_Discount DEFAULT (0.00),
+        TaxRate              DECIMAL(5,2)      NOT NULL CONSTRAINT DF_Orders_TaxRate DEFAULT (8.00),
+        TaxAmount            DECIMAL(18,2)     NOT NULL,
+        TotalAmount          DECIMAL(18,2)     NOT NULL,
+        PaymentMethodSummary NVARCHAR(100)     NOT NULL,
+        CashTendered         DECIMAL(18,2)     NULL,
+        ChangeGiven          DECIMAL(18,2)     NULL,
+        PointsEarned         INT               NOT NULL CONSTRAINT DF_Orders_PointsEarned DEFAULT (0),
+        PointsRedeemed       INT               NOT NULL CONSTRAINT DF_Orders_PointsRedeemed DEFAULT (0),
+        Status               NVARCHAR(30)      NOT NULL CONSTRAINT DF_Orders_Status DEFAULT ('Completed'),
+        Notes                NVARCHAR(250)     NULL,
+        CreatedAt            DATETIME2         NOT NULL CONSTRAINT DF_Orders_CreatedAt DEFAULT (SYSUTCDATETIME()),
+        CONSTRAINT PK_Orders PRIMARY KEY CLUSTERED (Id),
+        CONSTRAINT UQ_Orders_OrderNumber UNIQUE (OrderNumber),
+        CONSTRAINT FK_Orders_Customers FOREIGN KEY (CustomerId) REFERENCES dbo.Customers (Id),
+        CONSTRAINT FK_Orders_Users FOREIGN KEY (CashierUserId) REFERENCES dbo.Users (Id),
+        CONSTRAINT FK_Orders_TillSessions FOREIGN KEY (TillSessionId) REFERENCES dbo.TillSessions (Id),
+        CONSTRAINT FK_Orders_Discounts FOREIGN KEY (DiscountId) REFERENCES dbo.Discounts (Id)
+    );
+    CREATE NONCLUSTERED INDEX IX_Orders_OrderDate ON dbo.Orders (OrderDate DESC);
+    CREATE NONCLUSTERED INDEX IX_Orders_Status ON dbo.Orders (Status);
+END;
+
+-- 10. dbo.OrderItems
+IF OBJECT_ID('dbo.OrderItems', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.OrderItems (
+        Id             INT IDENTITY(1,1) NOT NULL,
+        OrderId        INT               NOT NULL,
+        ProductId      INT               NOT NULL,
+        ProductName    NVARCHAR(150)     NOT NULL,
+        Barcode        NVARCHAR(50)      NULL,
+        UnitPrice      DECIMAL(18,2)     NOT NULL,
+        CostPrice      DECIMAL(18,2)     NOT NULL CONSTRAINT DF_OrderItems_Cost DEFAULT (0.00),
+        Quantity       INT               NOT NULL,
+        DiscountAmount DECIMAL(18,2)     NOT NULL CONSTRAINT DF_OrderItems_Discount DEFAULT (0.00),
+        LineTotal      DECIMAL(18,2)     NOT NULL,
+        CONSTRAINT PK_OrderItems PRIMARY KEY CLUSTERED (Id),
+        CONSTRAINT FK_OrderItems_Orders FOREIGN KEY (OrderId) REFERENCES dbo.Orders (Id) ON DELETE CASCADE,
+        CONSTRAINT FK_OrderItems_Products FOREIGN KEY (ProductId) REFERENCES dbo.Products (Id)
+    );
+    CREATE NONCLUSTERED INDEX IX_OrderItems_OrderId ON dbo.OrderItems (OrderId);
+END;
+
+-- 11. dbo.OrderPayments
+IF OBJECT_ID('dbo.OrderPayments', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.OrderPayments (
+        Id              INT IDENTITY(1,1) NOT NULL,
+        OrderId         INT               NOT NULL,
+        PaymentMethod   NVARCHAR(50)      NOT NULL,
+        Amount          DECIMAL(18,2)     NOT NULL,
+        ReferenceNumber NVARCHAR(100)     NULL,
+        PaidAt          DATETIME2         NOT NULL CONSTRAINT DF_OrderPayments_PaidAt DEFAULT (SYSUTCDATETIME()),
+        CONSTRAINT PK_OrderPayments PRIMARY KEY CLUSTERED (Id),
+        CONSTRAINT FK_OrderPayments_Orders FOREIGN KEY (OrderId) REFERENCES dbo.Orders (Id) ON DELETE CASCADE
+    );
+    CREATE NONCLUSTERED INDEX IX_OrderPayments_OrderId ON dbo.OrderPayments (OrderId);
+END;
+
+-- 12. dbo.Refunds
+IF OBJECT_ID('dbo.Refunds', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Refunds (
+        Id                  INT IDENTITY(1,1) NOT NULL,
+        RefundNumber        NVARCHAR(40)      NOT NULL,
+        OrderId             INT               NOT NULL,
+        ProcessedByUserId   INT               NOT NULL,
+        ApprovedByManagerId INT               NULL,
+        RefundType          NVARCHAR(30)      NOT NULL CONSTRAINT DF_Refunds_Type DEFAULT ('Refund'),
+        RefundAmount        DECIMAL(18,2)     NOT NULL,
+        Reason              NVARCHAR(300)     NOT NULL,
+        RestockItems        BIT               NOT NULL CONSTRAINT DF_Refunds_Restock DEFAULT (1),
+        CreatedAt           DATETIME2         NOT NULL CONSTRAINT DF_Refunds_CreatedAt DEFAULT (SYSUTCDATETIME()),
+        CONSTRAINT PK_Refunds PRIMARY KEY CLUSTERED (Id),
+        CONSTRAINT UQ_Refunds_RefundNumber UNIQUE (RefundNumber),
+        CONSTRAINT FK_Refunds_Orders FOREIGN KEY (OrderId) REFERENCES dbo.Orders (Id),
+        CONSTRAINT FK_Refunds_ProcessedBy FOREIGN KEY (ProcessedByUserId) REFERENCES dbo.Users (Id),
+        CONSTRAINT FK_Refunds_ApprovedBy FOREIGN KEY (ApprovedByManagerId) REFERENCES dbo.Users (Id)
+    );
+END;
+
+-- 13. dbo.AuditLogs
+IF OBJECT_ID('dbo.AuditLogs', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.AuditLogs (
+        Id         INT IDENTITY(1,1) NOT NULL,
+        UserId     INT               NULL,
+        Username   NVARCHAR(100)     NOT NULL,
+        Action     NVARCHAR(100)     NOT NULL,
+        EntityName NVARCHAR(100)     NOT NULL,
+        EntityId   NVARCHAR(50)      NULL,
+        Details    NVARCHAR(1000)    NULL,
+        CreatedAt  DATETIME2         NOT NULL CONSTRAINT DF_AuditLogs_CreatedAt DEFAULT (SYSUTCDATETIME()),
+        CONSTRAINT PK_AuditLogs PRIMARY KEY CLUSTERED (Id)
+    );
+END;
+
+-- 14. dbo.StockAdjustmentNotes
 IF OBJECT_ID('dbo.StockAdjustmentNotes', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.StockAdjustmentNotes (
@@ -97,64 +403,112 @@ BEGIN
         CONSTRAINT FK_StockAdjustmentNotes_Products FOREIGN KEY (ProductId) REFERENCES dbo.Products (Id) ON DELETE CASCADE
     );
     CREATE NONCLUSTERED INDEX IX_StockAdjustmentNotes_CreatedAt ON dbo.StockAdjustmentNotes (CreatedAt DESC);
-END";
+END;
+
+-- Seed essential baseline Roles, Users & StoreSettings if destination tables were just created and are empty
+IF NOT EXISTS (SELECT 1 FROM dbo.Roles)
+BEGIN
+    INSERT INTO dbo.Roles (Name, Description) VALUES
+    (N'Administrator', N'Full system configuration, user management, GRN/Stock Adjustment Notes, and database settings'),
+    (N'Store Manager', N'Inventory master, discounts, customer loyalty, refunds, and financial reports'),
+    (N'Cashier',       N'POS terminal sales, barcode scanning, split payments, and receipt printing');
+END;
+
+IF NOT EXISTS (SELECT 1 FROM dbo.Users)
+BEGIN
+    DECLARE @AdminRoleId INT   = (SELECT TOP 1 Id FROM dbo.Roles WHERE Name = N'Administrator');
+    DECLARE @ManagerRoleId INT = (SELECT TOP 1 Id FROM dbo.Roles WHERE Name = N'Store Manager');
+    DECLARE @CashierRoleId INT = (SELECT TOP 1 Id FROM dbo.Roles WHERE Name = N'Cashier');
+
+    INSERT INTO dbo.Users (Username, FullName, Email, PasswordHash, RoleId, IsActive) VALUES
+    (N'admin',    N'Nalin Perera (System Admin)',    N'admin@freshmartpos.lk',   N'SHA256:Demo@123', ISNULL(@AdminRoleId, 1),   1),
+    (N'manager',  N'Kavindi Silva (Store Manager)',  N'manager@freshmartpos.lk', N'SHA256:Demo@123', ISNULL(@ManagerRoleId, 2), 1),
+    (N'cashier1', N'Ruwan Jayawardena (Cashier 01)', N'ruwan@freshmartpos.lk',   N'SHA256:Demo@123', ISNULL(@CashierRoleId, 3), 1);
+END;
+
+IF NOT EXISTS (SELECT 1 FROM dbo.StoreSettings)
+BEGIN
+    INSERT INTO dbo.StoreSettings (
+        StoreName, BranchCode, StoreAddress, Phone, Email, Currency,
+        DefaultTaxRate, LowStockThreshold, LoyaltyPointsPerHundredRs,
+        ReceiptFooterText, ReceiptPrinterName, ReceiptPrinterConnected,
+        BarcodeScannerName, BarcodeScannerConnected, PaymentTerminalName, PaymentTerminalConnected
+    ) VALUES (
+        N'FreshMart Supermarket', N'CMB-01', N'No. 142, Galle Road, Colombo 03, Sri Lanka',
+        N'+94 11 234 5678', N'support@freshmartpos.lk', N'LKR (Rs.)',
+        8.00, 15, 1,
+        N'Thank you for shopping at FreshMart! Goods once sold can be exchanged within 7 days with original receipt.',
+        N'Epson TM-T82III Thermal 80mm', 1,
+        N'Zebra DS2208 2D USB', 1,
+        N'Verifone VX520 NFC/EMV', 1
+    );
+END;
+";
+
+        await db.Database.ExecuteSqlRawAsync(ensureAllTablesSql);
+    }
+    finally
+    {
+        schemaLock.Release();
+    }
+}
+
+// Run automatic database & table verification at application startup
+using (var startupScope = app.Services.CreateScope())
+{
     try
     {
-        await db.Database.ExecuteSqlRawAsync(createTableSql);
+        var startupDb = startupScope.ServiceProvider.GetRequiredService<PosDbContext>();
+        await EnsureDatabaseAndTablesAsync(startupDb, dbConfig);
     }
-    catch
+    catch (Exception ex)
     {
-        // Ignored if DB is unreachable or table already exists
+        Console.WriteLine($"[Database Auto-Provisioning Warning]: {ex.Message}");
     }
 }
 
 /* ============================================================================
-   HEALTH & DATABASE CONNECTION CHECK ENDPOINT
+   HEALTH & DATABASE CONFIGURATION ENDPOINT
    ============================================================================ */
 app.MapGet("/api/health/db", async (PosDbContext db, DatabaseConfig config) =>
 {
     try
     {
+        await EnsureDatabaseAndTablesAsync(db, config);
         var canConnect = await db.Database.CanConnectAsync();
         if (!canConnect)
         {
-            return Results.Json(new
-            {
-                connected = false,
-                message = "Cannot connect to SQL Server. Please verify your connection string in backend/dbconfig.json and ensure PosManagementDb is created using database/01_Create_Schema.sql."
-            }, statusCode: 503);
+            return Results.Problem(
+                detail: "Cannot connect to SQL Server. Please check backend/dbconfig.json.",
+                statusCode: 503);
         }
-
-        await EnsureStockAdjustmentTableAsync(db);
-        var productCount = await db.Products.CountAsync();
-        var orderCount = await db.Orders.CountAsync();
-        var customerCount = await db.Customers.CountAsync();
 
         return Results.Ok(new
         {
-            connected = true,
+            status = "Connected",
+            provider = "SqlServer",
             database = db.Database.GetDbConnection().Database,
-            dataSource = db.Database.GetDbConnection().DataSource,
-            counts = new { products = productCount, orders = orderCount, customers = customerCount }
+            server = db.Database.GetDbConnection().DataSource,
+            productCount = await db.Products.CountAsync(p => p.IsActive),
+            customerCount = await db.Customers.CountAsync(c => c.IsActive),
+            orderCount = await db.Orders.CountAsync(),
+            stockAdjustmentCount = await db.StockAdjustmentNotes.CountAsync()
         });
     }
     catch (Exception ex)
     {
-        return Results.Json(new
-        {
-            connected = false,
-            message = ex.Message,
-            hint = "Check backend/dbconfig.json and run database/01_Create_Schema.sql on your SQL Server instance."
-        }, statusCode: 503);
+        return Results.Problem(
+            detail: $"Database connection error: {ex.Message}. Verify backend/dbconfig.json.",
+            statusCode: 500);
     }
 });
 
 /* ============================================================================
-   BOOTSTRAP ENDPOINT (Loads all live POS data in a single round-trip)
+   BOOTSTRAP ENDPOINT (Loads all live tables in one call for the POS UI)
    ============================================================================ */
-app.MapGet("/api/bootstrap", async (PosDbContext db) =>
+app.MapGet("/api/bootstrap", async (PosDbContext db, DatabaseConfig config) =>
 {
-    await EnsureStockAdjustmentTableAsync(db);
+    await EnsureDatabaseAndTablesAsync(db, config);
 
     var categories = await db.Categories
         .Where(c => c.IsActive)
@@ -166,7 +520,7 @@ app.MapGet("/api/bootstrap", async (PosDbContext db) =>
     var products = await db.Products
         .Include(p => p.Category)
         .Where(p => p.IsActive)
-        .OrderBy(p => p.Category!.DisplayOrder)
+        .OrderBy(p => p.Category != null ? p.Category.DisplayOrder : 999)
         .ThenBy(p => p.Name)
         .Select(p => new ProductDto(
             p.Id,
@@ -276,8 +630,10 @@ app.MapGet("/api/bootstrap", async (PosDbContext db) =>
 /* ============================================================================
    AUTHENTICATION & USERS ENDPOINTS
    ============================================================================ */
-app.MapPost("/api/auth/login", async (LoginRequest req, PosDbContext db) =>
+app.MapPost("/api/auth/login", async (LoginRequest req, PosDbContext db, DatabaseConfig config) =>
 {
+    await EnsureDatabaseAndTablesAsync(db, config);
+
     var user = await db.Users
         .Include(u => u.Role)
         .FirstOrDefaultAsync(u => u.Username == req.Username && u.IsActive);
@@ -317,8 +673,9 @@ app.MapPost("/api/auth/login", async (LoginRequest req, PosDbContext db) =>
     ));
 });
 
-app.MapGet("/api/users", async (PosDbContext db) =>
+app.MapGet("/api/users", async (PosDbContext db, DatabaseConfig config) =>
 {
+    await EnsureDatabaseAndTablesAsync(db, config);
     var users = await db.Users
         .Include(u => u.Role)
         .OrderBy(u => u.Id)
@@ -336,8 +693,10 @@ app.MapGet("/api/users", async (PosDbContext db) =>
     return Results.Ok(users);
 });
 
-app.MapPost("/api/users", async (CreateUserRequest req, PosDbContext db) =>
+app.MapPost("/api/users", async (CreateUserRequest req, PosDbContext db, DatabaseConfig config) =>
 {
+    await EnsureDatabaseAndTablesAsync(db, config);
+
     if (await db.Users.AnyAsync(u => u.Username == req.Username || u.Email == req.Email))
     {
         return Results.BadRequest(new { message = "A user with that username or email already exists." });
@@ -351,7 +710,7 @@ app.MapPost("/api/users", async (CreateUserRequest req, PosDbContext db) =>
 
     if (role is null)
     {
-        return Results.BadRequest(new { message = "Roles table is empty. Run 02_Insert_Demo_Data.sql first." });
+        return Results.BadRequest(new { message = "Roles table is empty." });
     }
 
     var user = new User
@@ -422,8 +781,9 @@ app.MapPatch("/api/users/{id:int}/toggle-status", async (int id, PosDbContext db
          Stock additions/adjustments happen exclusively via Goods Received from
          Production (GRN) & Stock Adjustment Notes (/api/stock-adjustments).
    ============================================================================ */
-app.MapGet("/api/categories", async (PosDbContext db) =>
+app.MapGet("/api/categories", async (PosDbContext db, DatabaseConfig config) =>
 {
+    await EnsureDatabaseAndTablesAsync(db, config);
     var categories = await db.Categories
         .Where(c => c.IsActive)
         .OrderBy(c => c.DisplayOrder)
@@ -433,8 +793,9 @@ app.MapGet("/api/categories", async (PosDbContext db) =>
     return Results.Ok(categories);
 });
 
-app.MapPost("/api/categories", async (CreateCategoryRequest req, PosDbContext db) =>
+app.MapPost("/api/categories", async (CreateCategoryRequest req, PosDbContext db, DatabaseConfig config) =>
 {
+    await EnsureDatabaseAndTablesAsync(db, config);
     var trimmed = req.Name.Trim();
     if (string.IsNullOrWhiteSpace(trimmed))
         return Results.BadRequest(new { message = "Category name is required." });
@@ -462,8 +823,9 @@ app.MapPost("/api/categories", async (CreateCategoryRequest req, PosDbContext db
     return Results.Ok(new CategoryDto(cat.Id, cat.Name, cat.Description, cat.DisplayOrder));
 });
 
-app.MapGet("/api/products", async (PosDbContext db) =>
+app.MapGet("/api/products", async (PosDbContext db, DatabaseConfig config) =>
 {
+    await EnsureDatabaseAndTablesAsync(db, config);
     var products = await db.Products
         .Include(p => p.Category)
         .Where(p => p.IsActive)
@@ -487,8 +849,10 @@ app.MapGet("/api/products", async (PosDbContext db) =>
     return Results.Ok(products);
 });
 
-app.MapPost("/api/products", async (UpsertProductRequest req, PosDbContext db) =>
+app.MapPost("/api/products", async (UpsertProductRequest req, PosDbContext db, DatabaseConfig config) =>
 {
+    await EnsureDatabaseAndTablesAsync(db, config);
+
     var categoryName = string.IsNullOrWhiteSpace(req.Category) ? "General" : req.Category.Trim();
     var category = await db.Categories.FirstOrDefaultAsync(c => c.Name == categoryName);
     if (category is null)
@@ -635,9 +999,9 @@ app.MapDelete("/api/products/{id:int}", async (int id, PosDbContext db) =>
    GOODS RECEIVED FROM PRODUCTION (GRN) & STOCK ADJUSTMENT NOTES ENDPOINTS
    (Admin Login Exclusive)
    ============================================================================ */
-app.MapGet("/api/stock-adjustments", async (PosDbContext db) =>
+app.MapGet("/api/stock-adjustments", async (PosDbContext db, DatabaseConfig config) =>
 {
-    await EnsureStockAdjustmentTableAsync(db);
+    await EnsureDatabaseAndTablesAsync(db, config);
     var notes = await db.StockAdjustmentNotes
         .OrderByDescending(n => n.CreatedAt)
         .Take(200)
@@ -660,9 +1024,9 @@ app.MapGet("/api/stock-adjustments", async (PosDbContext db) =>
     return Results.Ok(notes);
 });
 
-app.MapPost("/api/stock-adjustments", async (CreateStockAdjustmentRequest req, PosDbContext db) =>
+app.MapPost("/api/stock-adjustments", async (CreateStockAdjustmentRequest req, PosDbContext db, DatabaseConfig config) =>
 {
-    await EnsureStockAdjustmentTableAsync(db);
+    await EnsureDatabaseAndTablesAsync(db, config);
 
     if (req.Items is null || req.Items.Count == 0)
     {
@@ -808,8 +1172,9 @@ app.MapPost("/api/stock-adjustments", async (CreateStockAdjustmentRequest req, P
 /* ============================================================================
    CUSTOMERS & LOYALTY ENDPOINTS
    ============================================================================ */
-app.MapGet("/api/customers", async (PosDbContext db) =>
+app.MapGet("/api/customers", async (PosDbContext db, DatabaseConfig config) =>
 {
+    await EnsureDatabaseAndTablesAsync(db, config);
     var customers = await db.Customers
         .Where(c => c.IsActive)
         .OrderBy(c => c.CustomerCode)
@@ -828,8 +1193,9 @@ app.MapGet("/api/customers", async (PosDbContext db) =>
     return Results.Ok(customers);
 });
 
-app.MapPost("/api/customers", async (UpsertCustomerRequest req, PosDbContext db) =>
+app.MapPost("/api/customers", async (UpsertCustomerRequest req, PosDbContext db, DatabaseConfig config) =>
 {
+    await EnsureDatabaseAndTablesAsync(db, config);
     var count = await db.Customers.CountAsync();
     var code = $"CUST-{(count + 1):D3}";
     while (await db.Customers.AnyAsync(c => c.CustomerCode == code))
@@ -932,8 +1298,9 @@ app.MapDelete("/api/customers/{code}", async (string code, PosDbContext db) =>
 /* ============================================================================
    ORDERS, INVOICE CHECKOUT (TRANSACTIONAL STOCK DEDUCTION) & REFUNDS ENDPOINTS
    ============================================================================ */
-app.MapGet("/api/orders", async (PosDbContext db) =>
+app.MapGet("/api/orders", async (PosDbContext db, DatabaseConfig config) =>
 {
+    await EnsureDatabaseAndTablesAsync(db, config);
     var rawOrders = await db.Orders
         .Include(o => o.OrderItems)
         .Include(o => o.OrderPayments)
@@ -943,8 +1310,10 @@ app.MapGet("/api/orders", async (PosDbContext db) =>
     return Results.Ok(rawOrders.Select(MapOrderToDto));
 });
 
-app.MapPost("/api/orders", async (CreateOrderRequest req, PosDbContext db) =>
+app.MapPost("/api/orders", async (CreateOrderRequest req, PosDbContext db, DatabaseConfig config) =>
 {
+    await EnsureDatabaseAndTablesAsync(db, config);
+
     if (req.CartItems is null || req.CartItems.Count == 0)
     {
         return Results.BadRequest(new { message = "Cannot create an order with an empty cart." });
@@ -1037,13 +1406,22 @@ app.MapPost("/api/orders", async (CreateOrderRequest req, PosDbContext db) =>
 
         var openTill = await db.TillSessions.FirstOrDefaultAsync(t => t.Status == "Open");
 
+        // Resolve a valid CashierUserId in dbo.Users so FK never fails even on custom user setups
+        var requestedCashierId = req.CashierUserId ?? openTill?.UserId;
+        User? cashierUser = null;
+        if (requestedCashierId.HasValue)
+        {
+            cashierUser = await db.Users.FirstOrDefaultAsync(u => u.Id == requestedCashierId.Value);
+        }
+        cashierUser ??= await db.Users.FirstOrDefaultAsync();
+
         var order = new Order
         {
             OrderNumber = orderNumber,
             OrderDate = DateTime.UtcNow,
             CustomerId = customer?.Id,
             CustomerName = customer?.Name ?? "Walk-in",
-            CashierUserId = req.CashierUserId ?? openTill?.UserId ?? 3,
+            CashierUserId = cashierUser?.Id ?? 1,
             TillSessionId = openTill?.Id,
             DiscountId = discount?.Id,
             Subtotal = subtotal,
@@ -1090,7 +1468,7 @@ app.MapPost("/api/orders", async (CreateOrderRequest req, PosDbContext db) =>
         db.AuditLogs.Add(new AuditLog
         {
             UserId = order.CashierUserId,
-            Username = "cashier1",
+            Username = cashierUser?.Username ?? "cashier1",
             Action = "CREATE_ORDER",
             EntityName = "Orders",
             EntityId = order.OrderNumber,
@@ -1149,12 +1527,16 @@ app.MapPost("/api/orders/{orderNumber}/refund", async (string orderNumber, Refun
         }
 
         var refundCount = await db.Refunds.CountAsync();
+        var managerUser = req.ApprovedByManagerId.HasValue
+            ? await db.Users.FirstOrDefaultAsync(u => u.Id == req.ApprovedByManagerId.Value)
+            : await db.Users.FirstOrDefaultAsync();
+
         var refund = new Refund
         {
             RefundNumber = $"REF-{1001 + refundCount}",
             OrderId = order.Id,
             ProcessedByUserId = order.CashierUserId,
-            ApprovedByManagerId = req.ApprovedByManagerId ?? 2,
+            ApprovedByManagerId = managerUser?.Id,
             RefundType = "Refund",
             RefundAmount = order.TotalAmount,
             Reason = string.IsNullOrWhiteSpace(req.Reason) ? "Customer requested refund against receipt" : req.Reason.Trim(),
@@ -1165,7 +1547,7 @@ app.MapPost("/api/orders/{orderNumber}/refund", async (string orderNumber, Refun
 
         db.AuditLogs.Add(new AuditLog
         {
-            Username = "manager",
+            Username = managerUser?.Username ?? "manager",
             Action = "APPROVE_REFUND",
             EntityName = "Refunds",
             EntityId = refund.RefundNumber,
@@ -1187,8 +1569,9 @@ app.MapPost("/api/orders/{orderNumber}/refund", async (string orderNumber, Refun
 /* ============================================================================
    DISCOUNTS, SETTINGS, REPORTS & AUDIT LOGS ENDPOINTS
    ============================================================================ */
-app.MapGet("/api/discounts", async (PosDbContext db) =>
+app.MapGet("/api/discounts", async (PosDbContext db, DatabaseConfig config) =>
 {
+    await EnsureDatabaseAndTablesAsync(db, config);
     var list = await db.Discounts
         .Where(d => d.IsActive)
         .OrderBy(d => d.Code)
@@ -1197,14 +1580,16 @@ app.MapGet("/api/discounts", async (PosDbContext db) =>
     return Results.Ok(list);
 });
 
-app.MapGet("/api/settings", async (PosDbContext db) =>
+app.MapGet("/api/settings", async (PosDbContext db, DatabaseConfig config) =>
 {
+    await EnsureDatabaseAndTablesAsync(db, config);
     var settings = await db.StoreSettings.FirstOrDefaultAsync();
     return settings is not null ? Results.Ok(settings) : Results.NotFound();
 });
 
-app.MapPut("/api/settings", async (StoreSetting updated, PosDbContext db) =>
+app.MapPut("/api/settings", async (StoreSetting updated, PosDbContext db, DatabaseConfig config) =>
 {
+    await EnsureDatabaseAndTablesAsync(db, config);
     var settings = await db.StoreSettings.FirstOrDefaultAsync();
     if (settings is null)
     {
@@ -1245,8 +1630,9 @@ app.MapPut("/api/settings", async (StoreSetting updated, PosDbContext db) =>
     return Results.Ok(await db.StoreSettings.FirstOrDefaultAsync());
 });
 
-app.MapGet("/api/reports/summary", async (PosDbContext db) =>
+app.MapGet("/api/reports/summary", async (PosDbContext db, DatabaseConfig config) =>
 {
+    await EnsureDatabaseAndTablesAsync(db, config);
     var completedOrders = await db.Orders
         .Include(o => o.OrderItems)
         .Include(o => o.OrderPayments)
@@ -1303,8 +1689,9 @@ app.MapGet("/api/reports/summary", async (PosDbContext db) =>
     });
 });
 
-app.MapGet("/api/audit-logs", async (PosDbContext db) =>
+app.MapGet("/api/audit-logs", async (PosDbContext db, DatabaseConfig config) =>
 {
+    await EnsureDatabaseAndTablesAsync(db, config);
     var logs = await db.AuditLogs
         .OrderByDescending(a => a.CreatedAt)
         .Take(100)

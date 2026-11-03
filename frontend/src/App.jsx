@@ -211,115 +211,281 @@ function App() {
   const totalCents = Math.round(total * 100);
   const selectedCustomer = customers.find((customer) => customer.id === selectedCustomerId);
 
-  const printReceiptPdf = async (order) => {
-    const receiptWindow = window.open('', '_blank');
-    const { jsPDF } = await import('jspdf');
-    const pdf = new jsPDF();
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const margin = 16;
-    let y = 18;
+  const printReceiptPdf = useCallback(
+    (order) => {
+      if (!order) return;
 
-    pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(16);
-    pdf.text(storeSettings?.storeName || 'POS MANAGEMENT SYSTEM', pageWidth / 2, y, {
-      align: 'center',
-    });
-    y += 6;
-    pdf.setFont('helvetica', 'normal');
-    pdf.setFontSize(9);
-    if (storeSettings?.storeAddress) {
-      pdf.text(storeSettings.storeAddress, pageWidth / 2, y, { align: 'center' });
-      y += 5;
+      const escapeHtml = (val) =>
+        String(val ?? '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+
+      const storeName = escapeHtml(storeSettings?.storeName || 'FRESHMART SUPERMARKET');
+      const branchCode = storeSettings?.branchCode ? ` (${escapeHtml(storeSettings.branchCode)})` : '';
+      const storeAddress = escapeHtml(
+        storeSettings?.storeAddress || 'No. 142, Galle Road, Colombo 03'
+      );
+      const storePhone = escapeHtml(storeSettings?.phone || '+94 11 234 5678');
+      const footerText = escapeHtml(
+        storeSettings?.receiptFooterText || 'Thank you for your purchase!'
+      );
+
+      const orderId = escapeHtml(order.id || order.orderNumber || 'ORD-NEW');
+      const orderDate = order.date ? new Date(order.date).toLocaleString() : new Date().toLocaleString();
+      const customerName = escapeHtml(order.customer || order.customerName || 'Walk-in');
+      const cashierDisplay = escapeHtml(
+        `${currentUser?.fullName || 'Staff'} (${currentUser?.role || 'Cashier'})`
+      );
+      const orderStatus = String(order.status || 'Completed');
+
+      const rawItems = Array.isArray(order.cartItems) ? order.cartItems : [];
+      const normalizedItems =
+        rawItems.length > 0
+          ? rawItems.map((item) => {
+              const name = item.name || item.productName || 'Item';
+              const qty = Number(item.quantity ?? 1);
+              const price = Number(item.price ?? item.unitPrice ?? 0);
+              const amount = Number(item.lineTotal ?? price * qty);
+              return { name, qty, price, amount };
+            })
+          : [
+              {
+                name: `Order Items (${Number(order.items || 1)})`,
+                qty: Number(order.items || 1),
+                price: Number(order.subtotal ?? order.total ?? 0) / Math.max(1, Number(order.items || 1)),
+                amount: Number(order.subtotal ?? order.total ?? 0),
+              },
+            ];
+
+      const rawPayments = Array.isArray(order.payments) && order.payments.length > 0
+        ? order.payments
+        : [{ method: order.method || 'Cash', amount: order.total ?? 0 }];
+
+      const subtotalVal = Number(order.subtotal ?? order.total ?? 0);
+      const discountVal = Number(order.discountAmount ?? 0);
+      const taxVal = Number(order.tax ?? 0);
+      const totalVal = Number(order.total ?? 0);
+      const hasCashTendered =
+        order.cashTendered !== null &&
+        order.cashTendered !== undefined &&
+        Number(order.cashTendered) > 0;
+
+      const itemsRowsHtml = normalizedItems
+        .map(
+          (it) => `
+          <tr>
+            <td class="col-item">${escapeHtml(it.name)}</td>
+            <td class="col-qty">${it.qty}</td>
+            <td class="col-price">${it.price.toFixed(2)}</td>
+            <td class="col-amt">${it.amount.toFixed(2)}</td>
+          </tr>`
+        )
+        .join('');
+
+      const paymentsRowsHtml = rawPayments
+        .map(
+          (p) => `
+          <div class="row">
+            <span>${escapeHtml(p.method || p.paymentMethod || 'Payment')}</span>
+            <span>Rs. ${Number(p.amount ?? 0).toFixed(2)}</span>
+          </div>`
+        )
+        .join('');
+
+      // Low-power monochrome thermal HTML (zero solid fills, low dot-density dashed separators, 80mm roll ready)
+      const receiptHtml = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Receipt ${orderId}</title>
+  <style>
+    @page {
+      size: 80mm auto;
+      margin: 2mm;
     }
-    pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(13);
-    pdf.text('PAYMENT RECEIPT', pageWidth / 2, y + 2, { align: 'center' });
-    y += 10;
+    * {
+      box-sizing: border-box;
+      color: #000 !important;
+      background: transparent !important;
+      box-shadow: none !important;
+      text-shadow: none !important;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      max-width: 76mm;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 11px;
+      line-height: 1.35;
+      font-weight: 400;
+    }
+    .receipt {
+      padding: 2mm 1mm;
+    }
+    .center {
+      text-align: center;
+    }
+    .store-title {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+    .sub-line {
+      font-size: 10px;
+    }
+    .sep {
+      border: 0;
+      border-top: 1px dashed #000;
+      margin: 5px 0;
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      gap: 6px;
+      margin: 2px 0;
+    }
+    .bold {
+      font-weight: 700;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 3px 0;
+    }
+    th, td {
+      padding: 2px 0;
+      vertical-align: top;
+      font-size: 10.5px;
+    }
+    th {
+      border-bottom: 1px dashed #000;
+      font-weight: 700;
+      text-align: left;
+    }
+    .col-item {
+      width: 44%;
+      word-break: break-word;
+      padding-right: 3px;
+    }
+    .col-qty {
+      width: 12%;
+      text-align: right;
+    }
+    .col-price {
+      width: 22%;
+      text-align: right;
+    }
+    .col-amt {
+      width: 22%;
+      text-align: right;
+    }
+    .total-line {
+      font-size: 12.5px;
+      font-weight: 700;
+      padding: 3px 0;
+      border-top: 1px dashed #000;
+      border-bottom: 1px dashed #000;
+      margin: 4px 0;
+    }
+    .footer {
+      margin-top: 8px;
+      font-size: 10px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="receipt">
+    <div class="center store-title">${storeName}${branchCode}</div>
+    <div class="center sub-line">${storeAddress}</div>
+    <div class="center sub-line">Tel: ${storePhone}</div>
+    <div class="center bold" style="margin-top:3px;">
+      ${orderStatus === 'Refunded' ? '*** REFUND RECEIPT ***' : '--- SALES RECEIPT (LOW-POWER MODE) ---'}
+    </div>
+    <hr class="sep" />
+    <div class="row"><span>Invoice:</span><span class="bold">${orderId}</span></div>
+    <div class="row"><span>Date:</span><span>${escapeHtml(orderDate)}</span></div>
+    <div class="row"><span>Customer:</span><span>${customerName}</span></div>
+    <div class="row"><span>Cashier:</span><span>${cashierDisplay}</span></div>
+    <div class="row"><span>Status:</span><span>${escapeHtml(orderStatus)}</span></div>
+    <hr class="sep" />
+    <table>
+      <thead>
+        <tr>
+          <th class="col-item">Item</th>
+          <th class="col-qty">Qty</th>
+          <th class="col-price">Price</th>
+          <th class="col-amt">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${itemsRowsHtml}
+      </tbody>
+    </table>
+    <hr class="sep" />
+    <div class="row"><span>Subtotal</span><span>Rs. ${subtotalVal.toFixed(2)}</span></div>
+    ${
+      discountVal > 0
+        ? `<div class="row"><span>Discount</span><span>-Rs. ${discountVal.toFixed(2)}</span></div>`
+        : ''
+    }
+    <div class="row"><span>Tax (${taxRatePercent}%)</span><span>Rs. ${taxVal.toFixed(2)}</span></div>
+    <div class="row total-line"><span>TOTAL</span><span>Rs. ${totalVal.toFixed(2)}</span></div>
+    <div class="bold" style="margin-top:4px;">Payment Details:</div>
+    ${paymentsRowsHtml}
+    ${
+      hasCashTendered
+        ? `<div class="row"><span>Cash Tendered</span><span>Rs. ${Number(order.cashTendered).toFixed(2)}</span></div>
+           <div class="row"><span>Change Given</span><span>Rs. ${Number(order.change ?? 0).toFixed(2)}</span></div>`
+        : ''
+    }
+    <hr class="sep" />
+    <div class="footer">${footerText}</div>
+  </div>
+</body>
+</html>`;
 
-    pdf.setFont('helvetica', 'normal');
-    pdf.setFontSize(10);
-    pdf.text(`Order: ${order.id}`, margin, y);
-    pdf.text(`Date: ${new Date(order.date).toLocaleString()}`, margin, y + 6);
-    pdf.text(`Customer: ${order.customer}`, margin, y + 12);
-    pdf.text(`Cashier: ${currentUser?.fullName || 'Staff'} (${currentUser?.role || 'Cashier'})`, margin, y + 18);
-    y += 26;
-
-    pdf.setFont('helvetica', 'bold');
-    pdf.text('Item', margin, y);
-    pdf.text('Qty', pageWidth - 76, y, { align: 'right' });
-    pdf.text('Price', pageWidth - 48, y, { align: 'right' });
-    pdf.text('Amount', pageWidth - margin, y, { align: 'right' });
-    y += 3;
-    pdf.line(margin, y, pageWidth - margin, y);
-    y += 7;
-
-    pdf.setFont('helvetica', 'normal');
-    for (const item of order.cartItems || []) {
-      if (y > 265) {
-        pdf.addPage();
-        y = 20;
+      // Reuse a single lightweight hidden iframe so printing never gets stuck or blocked by popup blockers
+      let printFrame = document.getElementById('pos-low-power-print-frame');
+      if (printFrame) {
+        printFrame.remove();
       }
-      const itemName = pdf.splitTextToSize(item.name, pageWidth - 104);
-      pdf.text(itemName, margin, y);
-      pdf.text(String(item.quantity), pageWidth - 76, y, { align: 'right' });
-      pdf.text(`Rs. ${Number(item.price).toFixed(2)}`, pageWidth - 48, y, { align: 'right' });
-      pdf.text(`Rs. ${(Number(item.price) * item.quantity).toFixed(2)}`, pageWidth - margin, y, {
-        align: 'right',
-      });
-      y += Math.max(7, itemName.length * 5);
-    }
+      printFrame = document.createElement('iframe');
+      printFrame.id = 'pos-low-power-print-frame';
+      printFrame.title = 'POS Low Power Receipt Printer';
+      printFrame.style.position = 'fixed';
+      printFrame.style.right = '0';
+      printFrame.style.bottom = '0';
+      printFrame.style.width = '0';
+      printFrame.style.height = '0';
+      printFrame.style.border = '0';
+      printFrame.style.visibility = 'hidden';
+      document.body.appendChild(printFrame);
 
-    y += 2;
-    pdf.line(margin, y, pageWidth - margin, y);
-    y += 8;
-    pdf.text(`Subtotal: Rs. ${Number(order.subtotal ?? order.total).toFixed(2)}`, pageWidth - margin, y, {
-      align: 'right',
-    });
-    if (Number(order.discountAmount) > 0) {
-      y += 6;
-      pdf.text(`Discount: -Rs. ${Number(order.discountAmount).toFixed(2)}`, pageWidth - margin, y, {
-        align: 'right',
-      });
-    }
-    y += 6;
-    pdf.text(`Tax (${taxRatePercent}%): Rs. ${Number(order.tax ?? 0).toFixed(2)}`, pageWidth - margin, y, {
-      align: 'right',
-    });
-    y += 6;
-    pdf.setFont('helvetica', 'bold');
-    pdf.text(`Total: Rs. ${Number(order.total).toFixed(2)}`, pageWidth - margin, y, { align: 'right' });
-    y += 10;
-    pdf.text('Payments', margin, y);
-    y += 6;
-    pdf.setFont('helvetica', 'normal');
-    for (const payment of order.payments || []) {
-      pdf.text(`${payment.method}: Rs. ${Number(payment.amount).toFixed(2)}`, margin, y);
-      y += 6;
-    }
-    if (order.cashTendered !== null && order.cashTendered !== undefined) {
-      pdf.text(`Cash received: Rs. ${Number(order.cashTendered).toFixed(2)}`, margin, y);
-      y += 6;
-      pdf.text(`Change: Rs. ${Number(order.change ?? 0).toFixed(2)}`, margin, y);
-      y += 6;
-    }
-    y += 8;
-    pdf.text(
-      storeSettings?.receiptFooterText || 'Thank you for your purchase!',
-      pageWidth / 2,
-      y,
-      { align: 'center' }
-    );
+      const frameDoc = printFrame.contentWindow?.document || printFrame.contentDocument;
+      if (!frameDoc) return;
 
-    pdf.autoPrint({ variant: 'non-conform' });
-    const receiptUrl = URL.createObjectURL(pdf.output('blob'));
-    if (!receiptWindow) {
-      pdf.save(`${order.id}-receipt.pdf`);
-      URL.revokeObjectURL(receiptUrl);
-      return;
-    }
-    receiptWindow.location.href = receiptUrl;
-    window.setTimeout(() => URL.revokeObjectURL(receiptUrl), 60000);
-  };
+      frameDoc.open();
+      frameDoc.write(receiptHtml);
+      frameDoc.close();
+
+      // Trigger print asynchronously on the next tick so the POS UI never freezes or blocks
+      window.setTimeout(() => {
+        try {
+          if (printFrame.contentWindow) {
+            printFrame.contentWindow.focus();
+            printFrame.contentWindow.print();
+          }
+        } catch (err) {
+          console.error('Receipt print error:', err);
+        }
+      }, 60);
+    },
+    [storeSettings, currentUser, taxRatePercent]
+  );
 
   const handleCheckout = async (
     method,
@@ -359,8 +525,21 @@ function App() {
 
       setCart([]);
       setSelectedDiscountCode('');
+      // Print receipt immediately in low-power non-blocking mode and refresh DB data in parallel
+      printReceiptPdf({
+        ...savedOrder,
+        cartItems:
+          savedOrder?.cartItems?.length > 0
+            ? savedOrder.cartItems
+            : invoicedItems,
+        payments:
+          savedOrder?.payments?.length > 0
+            ? savedOrder.payments
+            : payments,
+        cashTendered: savedOrder?.cashTendered ?? cashDetails?.tendered ?? null,
+        change: savedOrder?.change ?? cashDetails?.change ?? 0,
+      });
       await loadDatabaseData();
-      await printReceiptPdf(savedOrder);
     } catch (err) {
       alert(err.message || 'Checkout failed.');
     } finally {
