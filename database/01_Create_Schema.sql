@@ -36,7 +36,7 @@ IF OBJECT_ID('dbo.Roles', 'U') IS NOT NULL DROP TABLE dbo.Roles;
 GO
 
 /* ============================================================================
-   1. ROLES TABLE (Cashier, Manager, Administrator)
+   1. ROLES TABLE (Cashier, Store Manager, Administrator)
    ============================================================================ */
 CREATE TABLE dbo.Roles (
     Id          INT IDENTITY(1,1) NOT NULL,
@@ -333,3 +333,4 @@ GO
 
 PRINT 'PosManagementDb schema created successfully.';
 GO
+

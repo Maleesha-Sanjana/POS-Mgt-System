@@ -284,6 +284,9 @@ app.MapPost("/api/users", async (CreateUserRequest req, PosDbContext db) =>
     }
 
     var role = await db.Roles.FirstOrDefaultAsync(r => r.Name == req.Role)
+               ?? (req.Role.Contains("Manager", StringComparison.OrdinalIgnoreCase)
+                   ? await db.Roles.FirstOrDefaultAsync(r => r.Name.Contains("Manager"))
+                   : null)
                ?? await db.Roles.FirstOrDefaultAsync(r => r.Name == "Cashier");
 
     if (role is null)

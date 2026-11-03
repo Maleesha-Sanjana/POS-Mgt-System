@@ -16,10 +16,12 @@ import { posApi } from '../api';
 export default function SettingsView({
   settings,
   users,
+  currentUser,
   onSaveSettings,
   onCreateUser,
   onToggleUserStatus,
 }) {
+  const isAdmin = currentUser?.role === 'Administrator' || currentUser?.role === 'Admin';
   const [activeCategory, setActiveCategory] = useState('General');
   const [form, setForm] = useState({
     storeName: '',
@@ -116,10 +118,10 @@ export default function SettingsView({
 
   const categories = [
     { id: 'General', icon: <Store size={18} />, label: 'Store Details' },
-    { id: 'Account', icon: <User size={18} />, label: 'Account & Roles' },
+    { id: 'Account', icon: <User size={18} />, label: 'Account & Roles', adminOnly: true },
     { id: 'Hardware', icon: <Printer size={18} />, label: 'Peripherals' },
     { id: 'Reports', icon: <BarChart3 size={18} />, label: 'Sales & Profit Reports' },
-    { id: 'Security', icon: <Shield size={18} />, label: 'Audit Trail & Logs' },
+    { id: 'Security', icon: <Shield size={18} />, label: 'Audit Trail & Logs', adminOnly: true },
   ];
 
   return (
@@ -159,15 +161,28 @@ export default function SettingsView({
               <button
                 key={category.id}
                 type="button"
-                onClick={() => setActiveCategory(category.id)}
-                className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-sm ${
+                onClick={() => {
+                  if (category.adminOnly && !isAdmin) {
+                    alert(`Access Restricted: "${category.label}" requires Administrator credentials.`);
+                    return;
+                  }
+                  setActiveCategory(category.id);
+                }}
+                className={`flex items-center justify-between px-4 py-3 rounded-xl transition-all font-medium text-sm ${
                   activeCategory === category.id
                     ? 'bg-indigo-50 text-indigo-700'
                     : 'text-slate-600 hover:bg-slate-50 hover:text-indigo-600'
                 }`}
               >
-                {category.icon}
-                {category.label}
+                <span className="flex items-center gap-3">
+                  {category.icon}
+                  {category.label}
+                </span>
+                {category.adminOnly && (
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 uppercase">
+                    Admin
+                  </span>
+                )}
               </button>
             ))}
           </nav>
@@ -313,7 +328,7 @@ export default function SettingsView({
                       className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
                     >
                       <option value="Cashier">Cashier</option>
-                      <option value="Manager">Manager</option>
+                      <option value="Store Manager">Store Manager (Manager)</option>
                       <option value="Administrator">Administrator</option>
                     </select>
                     <button

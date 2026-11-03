@@ -18,16 +18,49 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { posApi } from './api';
+import LoginView from './components/LoginView';
 import ProductsView from './components/ProductsView';
 import OrdersView from './components/OrdersView';
 import CustomersView from './components/CustomersView';
 import SettingsView from './components/SettingsView';
 
 function App() {
+  // Session Authentication State (Cashier, Store Manager, Administrator)
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem('pos_current_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
   const [activeTab, setActiveTab] = useState('POS');
   const [activeCategory, setActiveCategory] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [cart, setCart] = useState([]);
+
+  // Role classification
+  const userRole = currentUser?.role || 'Cashier';
+  const isCashier = userRole === 'Cashier';
+
+  const handleLoginSuccess = (user) => {
+    setCurrentUser(user);
+    try {
+      localStorage.setItem('pos_current_user', JSON.stringify(user));
+    } catch {}
+  };
+
+  const handleLogout = () => {
+    if (window.confirm(`Sign out of ${currentUser?.fullName || 'POS'} session?`)) {
+      setCurrentUser(null);
+      try {
+        localStorage.removeItem('pos_current_user');
+      } catch {}
+      setActiveTab('POS');
+      setCart([]);
+    }
+  };
 
   // Real Database State (no static/mock data)
   const [products, setProducts] = useState([]);
@@ -75,6 +108,13 @@ function App() {
   useEffect(() => {
     loadDatabaseData();
   }, [loadDatabaseData]);
+
+  // Enforce role-based access for Cashier
+  useEffect(() => {
+    if (isCashier && ['Products', 'Customers', 'Settings'].includes(activeTab)) {
+      setActiveTab('POS');
+    }
+  }, [isCashier, activeTab]);
 
   const categories = useMemo(() => {
     const names = categoryObjects.map((c) => c.name);
@@ -199,7 +239,8 @@ function App() {
     pdf.text(`Order: ${order.id}`, margin, y);
     pdf.text(`Date: ${new Date(order.date).toLocaleString()}`, margin, y + 6);
     pdf.text(`Customer: ${order.customer}`, margin, y + 12);
-    y += 22;
+    pdf.text(`Cashier: ${currentUser?.fullName || 'Staff'} (${currentUser?.role || 'Cashier'})`, margin, y + 18);
+    y += 26;
 
     pdf.setFont('helvetica', 'bold');
     pdf.text('Item', margin, y);
@@ -290,6 +331,7 @@ function App() {
         customerCode: selectedCustomerId || null,
         discountCode: selectedDiscountCode || null,
         method,
+        cashierUserId: currentUser?.id ?? 3,
         cashTendered: cashDetails?.tendered ?? null,
         change: cashDetails?.change ?? 0,
         cartItems: cart.map(({ id, name, price, quantity }) => ({
@@ -412,6 +454,10 @@ function App() {
     await loadDatabaseData();
   };
 
+  if (!currentUser) {
+    return <LoginView onLoginSuccess={handleLoginSuccess} />;
+  }
+
   return (
     <div className="flex h-screen bg-slate-50 font-sans overflow-hidden">
       {/* Sidebar */}
@@ -432,6 +478,7 @@ function App() {
             active={activeTab === 'Products'}
             onClick={() => setActiveTab('Products')}
             label="Products"
+            restricted={isCashier}
           />
           <NavItem
             icon={<ShoppingCart />}
@@ -444,12 +491,14 @@ function App() {
             active={activeTab === 'Customers'}
             onClick={() => setActiveTab('Customers')}
             label="Customers"
+            restricted={isCashier}
           />
           <NavItem
             icon={<Settings />}
             active={activeTab === 'Settings'}
             onClick={() => setActiveTab('Settings')}
             label="Settings"
+            restricted={isCashier}
           />
         </nav>
 
@@ -462,7 +511,12 @@ function App() {
           <RefreshCw size={22} className={loadingData ? 'animate-spin text-indigo-600' : ''} />
         </button>
 
-        <button className="p-3 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all">
+        <button
+          type="button"
+          onClick={handleLogout}
+          title={`Sign out (${currentUser?.fullName})`}
+          className="p-3 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
+        >
           <LogOut size={24} />
         </button>
       </aside>
@@ -494,6 +548,7 @@ function App() {
         <SettingsView
           settings={storeSettings}
           users={users}
+          currentUser={currentUser}
           onSaveSettings={handleSaveSettings}
           onCreateUser={handleCreateUser}
           onToggleUserStatus={handleToggleUserStatus}
@@ -516,15 +571,40 @@ function App() {
                 </p>
               </div>
 
-              <div className="relative w-96">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-                <input
-                  type="text"
-                  placeholder="Search products by name, SKU, or barcode..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full bg-slate-100 border-none rounded-full py-2.5 pl-10 pr-4 focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                />
+              <div className="flex items-center gap-5">
+                <div className="relative w-80">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                  <input
+                    type="text"
+                    placeholder="Search products by name, SKU, or barcode..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full bg-slate-100 border-none rounded-full py-2.5 pl-10 pr-4 focus:ring-2 focus:ring-indigo-500 outline-none text-sm transition-all"
+                  />
+                </div>
+
+                {/* Staff Profile Chip */}
+                <div className="flex items-center gap-3 pl-4 border-l border-slate-200">
+                  <div
+                    className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm shadow-sm ${
+                      currentUser?.role === 'Administrator'
+                        ? 'bg-purple-100 text-purple-700'
+                        : currentUser?.role === 'Store Manager' || currentUser?.role === 'Manager'
+                        ? 'bg-amber-100 text-amber-700'
+                        : 'bg-emerald-100 text-emerald-700'
+                    }`}
+                  >
+                    {currentUser?.fullName?.charAt(0) || 'U'}
+                  </div>
+                  <div className="flex flex-col text-left">
+                    <span className="text-xs font-bold text-slate-800 leading-tight">
+                      {currentUser?.fullName}
+                    </span>
+                    <span className="text-[10px] font-semibold text-slate-500">
+                      {currentUser?.role}
+                    </span>
+                  </div>
+                </div>
               </div>
             </header>
 
@@ -1010,19 +1090,25 @@ function App() {
   );
 }
 
-function NavItem({ icon, active, label, onClick }) {
+function NavItem({ icon, active, label, onClick, restricted = false }) {
   return (
     <button
-      onClick={onClick}
+      onClick={
+        restricted
+          ? () => alert(`Access Restricted: "${label}" requires Store Manager or Administrator credentials.`)
+          : onClick
+      }
       className={`p-3 rounded-xl transition-all relative group ${
-        active
-          ? 'bg-indigo-50 text-indigo-600'
+        restricted
+          ? 'text-slate-300 hover:text-slate-400 opacity-40 cursor-not-allowed'
+          : active
+          ? 'bg-indigo-50 text-indigo-600 shadow-sm'
           : 'text-slate-400 hover:bg-slate-50 hover:text-indigo-500'
       }`}
     >
       {icon}
       <div className="absolute left-full ml-4 top-1/2 -translate-y-1/2 bg-slate-800 text-white text-xs font-medium py-1.5 px-3 rounded-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all whitespace-nowrap z-50">
-        {label}
+        {restricted ? `${label} (Manager/Admin Only)` : label}
         <div className="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent border-r-slate-800"></div>
       </div>
     </button>

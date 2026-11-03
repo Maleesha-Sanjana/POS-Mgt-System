@@ -11,14 +11,13 @@ public class DatabaseConfig
     public const string SectionName = "DatabaseConfig";
 
     /// <summary>
-    /// Fallback connection string if dbconfig.json is not provided.
-    /// Change this or edit backend/dbconfig.json to point to your SQL Server instance.
+    /// Fallback connection string pointing to the remote SQL Server instance.
     /// </summary>
     public const string FallbackConnectionString =
-        "Server=localhost;Database=PosManagementDb;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=True;";
+        "Server=38.247.130.159,47182;Database=PosManagementDb;User Id=sa;Password=Corei7@2022!;Encrypt=False;TrustServerCertificate=True;MultipleActiveResultSets=True;";
 
     public string ConnectionString { get; set; } = FallbackConnectionString;
-    public int CommandTimeoutSeconds { get; set; } = 30;
+    public int CommandTimeoutSeconds { get; set; } = 60;
     public bool EnableSensitiveDataLogging { get; set; } = false;
 
     public static DatabaseConfig LoadAndRegister(WebApplicationBuilder builder)
@@ -60,3 +59,4 @@ public class DatabaseConfig
         return dbConfig;
     }
 }
+
