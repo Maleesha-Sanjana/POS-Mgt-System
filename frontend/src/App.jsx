@@ -70,6 +70,7 @@ function App() {
   const [discounts, setDiscounts] = useState([]);
   const [storeSettings, setStoreSettings] = useState(null);
   const [users, setUsers] = useState([]);
+  const [stockAdjustments, setStockAdjustments] = useState([]);
 
   const [loadingData, setLoadingData] = useState(true);
   const [dbError, setDbError] = useState('');
@@ -95,6 +96,7 @@ function App() {
       setDiscounts(data.discounts || []);
       setStoreSettings(data.settings || null);
       setUsers(data.users || []);
+      setStockAdjustments(data.stockAdjustments || []);
     } catch (err) {
       setDbError(
         err.message ||
@@ -327,6 +329,13 @@ function App() {
     if (cart.length === 0 || checkingOut) return;
     setCheckingOut(true);
     try {
+      const invoicedItems = cart.map(({ id, name, price, quantity }) => ({
+        id,
+        name,
+        price,
+        quantity,
+      }));
+
       const savedOrder = await posApi.createOrder({
         customerCode: selectedCustomerId || null,
         discountCode: selectedDiscountCode || null,
@@ -334,14 +343,19 @@ function App() {
         cashierUserId: currentUser?.id ?? 3,
         cashTendered: cashDetails?.tendered ?? null,
         change: cashDetails?.change ?? 0,
-        cartItems: cart.map(({ id, name, price, quantity }) => ({
-          id,
-          name,
-          price,
-          quantity,
-        })),
+        cartItems: invoicedItems,
         payments,
       });
+
+      // Immediately reflect the stock reduction on screen and sync with SQL Server
+      setProducts((prev) =>
+        prev.map((prod) => {
+          const sold = invoicedItems.find((item) => item.id === prod.id);
+          return sold
+            ? { ...prod, stock: Math.max(0, Number(prod.stock) - Number(sold.quantity)) }
+            : prod;
+        })
+      );
 
       setCart([]);
       setSelectedDiscountCode('');
@@ -415,6 +429,11 @@ function App() {
 
   const handleCreateCategory = async (payload) => {
     await posApi.createCategory(payload);
+    await loadDatabaseData();
+  };
+
+  const handleCreateStockAdjustment = async (payload) => {
+    await posApi.createStockAdjustment(payload);
     await loadDatabaseData();
   };
 
@@ -526,10 +545,13 @@ function App() {
         <ProductsView
           products={products}
           categories={categories}
+          stockAdjustments={stockAdjustments}
+          currentUser={currentUser}
           onCreateProduct={handleCreateProduct}
           onUpdateProduct={handleUpdateProduct}
           onDeleteProduct={handleDeleteProduct}
           onCreateCategory={handleCreateCategory}
+          onCreateStockAdjustment={handleCreateStockAdjustment}
         />
       ) : activeTab === 'Orders' ? (
         <OrdersView

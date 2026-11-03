@@ -72,6 +72,42 @@ static OrderDto MapOrderToDto(Order o) => new(
     )).ToList()
 );
 
+// Helper to ensure dbo.StockAdjustmentNotes table exists in SQL Server
+static async Task EnsureStockAdjustmentTableAsync(PosDbContext db)
+{
+    const string createTableSql = @"
+IF OBJECT_ID('dbo.StockAdjustmentNotes', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.StockAdjustmentNotes (
+        Id                INT IDENTITY(1,1) NOT NULL,
+        NoteNumber        NVARCHAR(40)      NOT NULL,
+        NoteType          NVARCHAR(60)      NOT NULL,
+        ProductId         INT               NOT NULL,
+        ProductName       NVARCHAR(150)     NOT NULL,
+        Sku               NVARCHAR(50)      NOT NULL,
+        PreviousStock     INT               NOT NULL,
+        QuantityChange    INT               NOT NULL,
+        NewStock          INT               NOT NULL,
+        BatchReference    NVARCHAR(100)     NULL,
+        Remarks           NVARCHAR(500)     NULL,
+        CreatedByUserId   INT               NULL,
+        CreatedByUsername NVARCHAR(100)     NOT NULL CONSTRAINT DF_StockAdj_User DEFAULT ('admin'),
+        CreatedAt         DATETIME2         NOT NULL CONSTRAINT DF_StockAdj_CreatedAt DEFAULT (SYSUTCDATETIME()),
+        CONSTRAINT PK_StockAdjustmentNotes PRIMARY KEY CLUSTERED (Id),
+        CONSTRAINT FK_StockAdjustmentNotes_Products FOREIGN KEY (ProductId) REFERENCES dbo.Products (Id) ON DELETE CASCADE
+    );
+    CREATE NONCLUSTERED INDEX IX_StockAdjustmentNotes_CreatedAt ON dbo.StockAdjustmentNotes (CreatedAt DESC);
+END";
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(createTableSql);
+    }
+    catch
+    {
+        // Ignored if DB is unreachable or table already exists
+    }
+}
+
 /* ============================================================================
    HEALTH & DATABASE CONNECTION CHECK ENDPOINT
    ============================================================================ */
@@ -89,6 +125,7 @@ app.MapGet("/api/health/db", async (PosDbContext db, DatabaseConfig config) =>
             }, statusCode: 503);
         }
 
+        await EnsureStockAdjustmentTableAsync(db);
         var productCount = await db.Products.CountAsync();
         var orderCount = await db.Orders.CountAsync();
         var customerCount = await db.Customers.CountAsync();
@@ -117,6 +154,8 @@ app.MapGet("/api/health/db", async (PosDbContext db, DatabaseConfig config) =>
    ============================================================================ */
 app.MapGet("/api/bootstrap", async (PosDbContext db) =>
 {
+    await EnsureStockAdjustmentTableAsync(db);
+
     var categories = await db.Categories
         .Where(c => c.IsActive)
         .OrderBy(c => c.DisplayOrder)
@@ -201,6 +240,26 @@ app.MapGet("/api/bootstrap", async (PosDbContext db) =>
         ))
         .ToListAsync();
 
+    var stockAdjustments = await db.StockAdjustmentNotes
+        .OrderByDescending(n => n.CreatedAt)
+        .Take(200)
+        .Select(n => new StockAdjustmentDto(
+            n.Id,
+            n.NoteNumber,
+            n.NoteType,
+            n.ProductId,
+            n.ProductName,
+            n.Sku,
+            n.PreviousStock,
+            n.QuantityChange,
+            n.NewStock,
+            n.BatchReference,
+            n.Remarks,
+            n.CreatedByUsername,
+            n.CreatedAt
+        ))
+        .ToListAsync();
+
     return Results.Ok(new
     {
         categories,
@@ -209,7 +268,8 @@ app.MapGet("/api/bootstrap", async (PosDbContext db) =>
         orders,
         discounts,
         settings,
-        users
+        users,
+        stockAdjustments
     });
 });
 
@@ -357,7 +417,10 @@ app.MapPatch("/api/users/{id:int}/toggle-status", async (int id, PosDbContext db
 });
 
 /* ============================================================================
-   CATEGORIES & PRODUCTS ENDPOINTS
+   CATEGORIES & INVENTORY MASTER (PRODUCTS) ENDPOINTS
+   Note: Product creation initializes Stock = 0 and keeps ReorderLevel.
+         Stock additions/adjustments happen exclusively via Goods Received from
+         Production (GRN) & Stock Adjustment Notes (/api/stock-adjustments).
    ============================================================================ */
 app.MapGet("/api/categories", async (PosDbContext db) =>
 {
@@ -448,7 +511,8 @@ app.MapPost("/api/products", async (UpsertProductRequest req, PosDbContext db) =
         CategoryId = category.Id,
         Price = req.Price,
         CostPrice = req.CostPrice > 0 ? req.CostPrice : Math.Round(req.Price * 0.72m, 2),
-        Stock = req.Stock,
+        // Stock at Inventory Master creation is strictly 0. Stock is added via Goods Received from Production (GRN) / Adjustment Note.
+        Stock = 0,
         ReorderLevel = req.ReorderLevel > 0 ? req.ReorderLevel : 15,
         Icon = string.IsNullOrWhiteSpace(req.Icon) ? "📦" : req.Icon.Trim(),
         Color = string.IsNullOrWhiteSpace(req.Color) ? "bg-indigo-100 text-indigo-600" : req.Color.Trim(),
@@ -460,11 +524,11 @@ app.MapPost("/api/products", async (UpsertProductRequest req, PosDbContext db) =
     db.Products.Add(product);
     db.AuditLogs.Add(new AuditLog
     {
-        Username = "manager",
+        Username = "admin",
         Action = "CREATE_PRODUCT",
         EntityName = "Products",
         EntityId = product.Sku,
-        Details = $"Added product '{product.Name}' (Price: Rs. {product.Price:F2}, Stock: {product.Stock})."
+        Details = $"Created product '{product.Name}' in Inventory Master (Price: Rs. {product.Price:F2}, Reorder Level: {product.ReorderLevel}, Initial Stock: 0)."
     });
     await db.SaveChangesAsync();
 
@@ -505,7 +569,7 @@ app.MapPut("/api/products/{id:int}", async (int id, UpsertProductRequest req, Po
     product.CategoryId = category.Id;
     product.Price = req.Price;
     if (req.CostPrice >= 0) product.CostPrice = req.CostPrice;
-    product.Stock = req.Stock;
+    // Stock is NOT modified from Inventory Master edit; it is exclusively controlled by GRN / Stock Adjustment Notes and Invoices.
     if (req.ReorderLevel > 0) product.ReorderLevel = req.ReorderLevel;
     if (!string.IsNullOrWhiteSpace(req.Icon)) product.Icon = req.Icon.Trim();
     if (!string.IsNullOrWhiteSpace(req.Color)) product.Color = req.Color.Trim();
@@ -513,11 +577,11 @@ app.MapPut("/api/products/{id:int}", async (int id, UpsertProductRequest req, Po
 
     db.AuditLogs.Add(new AuditLog
     {
-        Username = "manager",
+        Username = "admin",
         Action = "UPDATE_PRODUCT",
         EntityName = "Products",
         EntityId = product.Id.ToString(),
-        Details = $"Updated '{product.Name}' (Price: Rs. {product.Price:F2}, Stock: {product.Stock})."
+        Details = $"Updated Inventory Master for '{product.Name}' (Price: Rs. {product.Price:F2}, Reorder Level: {product.ReorderLevel})."
     });
     await db.SaveChangesAsync();
 
@@ -557,7 +621,7 @@ app.MapDelete("/api/products/{id:int}", async (int id, PosDbContext db) =>
 
     db.AuditLogs.Add(new AuditLog
     {
-        Username = "manager",
+        Username = "admin",
         Action = "DEACTIVATE_PRODUCT",
         EntityName = "Products",
         EntityId = product.Id.ToString(),
@@ -565,6 +629,180 @@ app.MapDelete("/api/products/{id:int}", async (int id, PosDbContext db) =>
     });
     await db.SaveChangesAsync();
     return Results.NoContent();
+});
+
+/* ============================================================================
+   GOODS RECEIVED FROM PRODUCTION (GRN) & STOCK ADJUSTMENT NOTES ENDPOINTS
+   (Admin Login Exclusive)
+   ============================================================================ */
+app.MapGet("/api/stock-adjustments", async (PosDbContext db) =>
+{
+    await EnsureStockAdjustmentTableAsync(db);
+    var notes = await db.StockAdjustmentNotes
+        .OrderByDescending(n => n.CreatedAt)
+        .Take(200)
+        .Select(n => new StockAdjustmentDto(
+            n.Id,
+            n.NoteNumber,
+            n.NoteType,
+            n.ProductId,
+            n.ProductName,
+            n.Sku,
+            n.PreviousStock,
+            n.QuantityChange,
+            n.NewStock,
+            n.BatchReference,
+            n.Remarks,
+            n.CreatedByUsername,
+            n.CreatedAt
+        ))
+        .ToListAsync();
+    return Results.Ok(notes);
+});
+
+app.MapPost("/api/stock-adjustments", async (CreateStockAdjustmentRequest req, PosDbContext db) =>
+{
+    await EnsureStockAdjustmentTableAsync(db);
+
+    if (req.Items is null || req.Items.Count == 0)
+    {
+        return Results.BadRequest(new { message = "Please select at least one product and quantity for the note." });
+    }
+
+    // Enforce Admin-exclusive access
+    bool isAdmin = false;
+    string actingUsername = req.Username ?? "admin";
+    int? actingUserId = req.UserId;
+
+    if (req.UserId.HasValue)
+    {
+        var dbUser = await db.Users.Include(u => u.Role).FirstOrDefaultAsync(u => u.Id == req.UserId.Value);
+        if (dbUser is not null)
+        {
+            actingUsername = dbUser.Username;
+            isAdmin = string.Equals(dbUser.Role?.Name, "Administrator", StringComparison.OrdinalIgnoreCase)
+                      || string.Equals(dbUser.Role?.Name, "Admin", StringComparison.OrdinalIgnoreCase)
+                      || string.Equals(dbUser.Username, "admin", StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    if (!isAdmin)
+    {
+        isAdmin = string.Equals(req.UserRole, "Administrator", StringComparison.OrdinalIgnoreCase)
+                  || string.Equals(req.UserRole, "Admin", StringComparison.OrdinalIgnoreCase)
+                  || string.Equals(req.Username, "admin", StringComparison.OrdinalIgnoreCase);
+    }
+
+    if (!isAdmin)
+    {
+        return Results.BadRequest(new
+        {
+            message = "Access Restricted: Goods Received from Production (GRN) and Stock Adjustment Notes are exclusive to Administrator login."
+        });
+    }
+
+    var noteType = string.IsNullOrWhiteSpace(req.NoteType)
+        ? "Goods Received from Production (GRN)"
+        : req.NoteType.Trim();
+
+    bool isDeduction = noteType.Contains("(-)") || noteType.Contains("Deduct", StringComparison.OrdinalIgnoreCase)
+                       || noteType.Contains("Wastage", StringComparison.OrdinalIgnoreCase);
+
+    await using var tx = await db.Database.BeginTransactionAsync();
+    try
+    {
+        var existingCount = await db.StockAdjustmentNotes.CountAsync();
+        var prefix = noteType.Contains("Production", StringComparison.OrdinalIgnoreCase)
+                     || noteType.Contains("GRN", StringComparison.OrdinalIgnoreCase)
+            ? "GRN"
+            : "ADJ";
+        var noteNumber = $"{prefix}-{1001 + existingCount}";
+
+        var createdDtos = new List<StockAdjustmentDto>();
+
+        foreach (var line in req.Items)
+        {
+            if (line.Quantity <= 0)
+            {
+                return Results.BadRequest(new { message = "Quantity must be greater than zero." });
+            }
+
+            var product = await db.Products.FirstOrDefaultAsync(p => p.Id == line.ProductId);
+            if (product is null)
+            {
+                return Results.BadRequest(new { message = $"Product ID {line.ProductId} not found." });
+            }
+
+            var previousStock = product.Stock;
+            var signedChange = isDeduction ? -Math.Abs(line.Quantity) : Math.Abs(line.Quantity);
+
+            if (previousStock + signedChange < 0)
+            {
+                return Results.BadRequest(new
+                {
+                    message = $"Cannot deduct {Math.Abs(line.Quantity)} unit(s) from '{product.Name}' (Current Stock: {previousStock})."
+                });
+            }
+
+            product.Stock = previousStock + signedChange;
+            product.UpdatedAt = DateTime.UtcNow;
+
+            var note = new StockAdjustmentNote
+            {
+                NoteNumber = noteNumber,
+                NoteType = noteType,
+                ProductId = product.Id,
+                ProductName = product.Name,
+                Sku = product.Sku,
+                PreviousStock = previousStock,
+                QuantityChange = signedChange,
+                NewStock = product.Stock,
+                BatchReference = string.IsNullOrWhiteSpace(req.BatchReference) ? null : req.BatchReference.Trim(),
+                Remarks = string.IsNullOrWhiteSpace(req.Remarks) ? null : req.Remarks.Trim(),
+                CreatedByUserId = actingUserId,
+                CreatedByUsername = actingUsername,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            db.StockAdjustmentNotes.Add(note);
+
+            db.AuditLogs.Add(new AuditLog
+            {
+                UserId = actingUserId,
+                Username = actingUsername,
+                Action = prefix == "GRN" ? "GOODS_RECEIVED_NOTE" : "STOCK_ADJUSTMENT",
+                EntityName = "StockAdjustmentNotes",
+                EntityId = noteNumber,
+                Details = $"{noteType} [{noteNumber}] for '{product.Name}' ({product.Sku}): Stock {previousStock} {(signedChange >= 0 ? "+" : "")}{signedChange} -> {product.Stock}."
+            });
+
+            await db.SaveChangesAsync();
+
+            createdDtos.Add(new StockAdjustmentDto(
+                note.Id,
+                note.NoteNumber,
+                note.NoteType,
+                note.ProductId,
+                note.ProductName,
+                note.Sku,
+                note.PreviousStock,
+                note.QuantityChange,
+                note.NewStock,
+                note.BatchReference,
+                note.Remarks,
+                note.CreatedByUsername,
+                note.CreatedAt
+            ));
+        }
+
+        await tx.CommitAsync();
+        return Results.Ok(createdDtos);
+    }
+    catch (Exception ex)
+    {
+        await tx.RollbackAsync();
+        return Results.BadRequest(new { message = $"Failed to post stock adjustment note: {ex.Message}" });
+    }
 });
 
 /* ============================================================================
@@ -692,7 +930,7 @@ app.MapDelete("/api/customers/{code}", async (string code, PosDbContext db) =>
 });
 
 /* ============================================================================
-   ORDERS, CHECKOUT (TRANSACTIONAL STOCK DEDUCTION) & REFUNDS ENDPOINTS
+   ORDERS, INVOICE CHECKOUT (TRANSACTIONAL STOCK DEDUCTION) & REFUNDS ENDPOINTS
    ============================================================================ */
 app.MapGet("/api/orders", async (PosDbContext db) =>
 {
@@ -734,6 +972,7 @@ app.MapPost("/api/orders", async (CreateOrderRequest req, PosDbContext db) =>
 
         var orderItems = new List<OrderItem>();
         decimal subtotal = 0m;
+        int totalUnitsDeducted = 0;
 
         foreach (var itemReq in req.CartItems)
         {
@@ -751,9 +990,10 @@ app.MapPost("/api/orders", async (CreateOrderRequest req, PosDbContext db) =>
                 });
             }
 
-            // Deduct stock in real time
+            // Deduct stock in real time upon invoice creation
             product.Stock -= itemReq.Quantity;
             product.UpdatedAt = DateTime.UtcNow;
+            totalUnitsDeducted += itemReq.Quantity;
 
             var lineTotal = Math.Round(product.Price * itemReq.Quantity, 2);
             subtotal += lineTotal;
@@ -854,7 +1094,7 @@ app.MapPost("/api/orders", async (CreateOrderRequest req, PosDbContext db) =>
             Action = "CREATE_ORDER",
             EntityName = "Orders",
             EntityId = order.OrderNumber,
-            Details = $"Completed sale {order.OrderNumber} for Rs. {order.TotalAmount:F2} via {order.PaymentMethodSummary}."
+            Details = $"Completed invoice {order.OrderNumber} for Rs. {order.TotalAmount:F2} via {order.PaymentMethodSummary} and deducted {totalUnitsDeducted} unit(s) from inventory stock."
         });
 
         await db.SaveChangesAsync();

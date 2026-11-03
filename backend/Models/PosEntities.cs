@@ -320,3 +320,33 @@ public class AuditLog
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
+[Table("StockAdjustmentNotes", Schema = "dbo")]
+public class StockAdjustmentNote
+{
+    [Key]
+    public int Id { get; set; }
+    [Required, MaxLength(40)]
+    public string NoteNumber { get; set; } = string.Empty;
+    [Required, MaxLength(60)]
+    public string NoteType { get; set; } = "Goods Received from Production (GRN)";
+    public int ProductId { get; set; }
+    [Required, MaxLength(150)]
+    public string ProductName { get; set; } = string.Empty;
+    [Required, MaxLength(50)]
+    public string Sku { get; set; } = string.Empty;
+    public int PreviousStock { get; set; }
+    public int QuantityChange { get; set; }
+    public int NewStock { get; set; }
+    [MaxLength(100)]
+    public string? BatchReference { get; set; }
+    [MaxLength(500)]
+    public string? Remarks { get; set; }
+    public int? CreatedByUserId { get; set; }
+    [Required, MaxLength(100)]
+    public string CreatedByUsername { get; set; } = "admin";
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    [ForeignKey(nameof(ProductId))]
+    public Product? Product { get; set; }
+}
+
