@@ -70,6 +70,7 @@ function App() {
   const [discounts, setDiscounts] = useState([]);
   const [storeSettings, setStoreSettings] = useState(null);
   const [users, setUsers] = useState([]);
+  const [stockAdjustments, setStockAdjustments] = useState([]);
 
   const [loadingData, setLoadingData] = useState(true);
   const [dbError, setDbError] = useState('');
@@ -95,6 +96,7 @@ function App() {
       setDiscounts(data.discounts || []);
       setStoreSettings(data.settings || null);
       setUsers(data.users || []);
+      setStockAdjustments(data.stockAdjustments || []);
     } catch (err) {
       setDbError(
         err.message ||
@@ -209,115 +211,169 @@ function App() {
   const totalCents = Math.round(total * 100);
   const selectedCustomer = customers.find((customer) => customer.id === selectedCustomerId);
 
-  const printReceiptPdf = async (order) => {
-    const receiptWindow = window.open('', '_blank');
-    const { jsPDF } = await import('jspdf');
-    const pdf = new jsPDF();
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const margin = 16;
-    let y = 18;
-
-    pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(16);
-    pdf.text(storeSettings?.storeName || 'POS MANAGEMENT SYSTEM', pageWidth / 2, y, {
-      align: 'center',
-    });
-    y += 6;
-    pdf.setFont('helvetica', 'normal');
-    pdf.setFontSize(9);
-    if (storeSettings?.storeAddress) {
-      pdf.text(storeSettings.storeAddress, pageWidth / 2, y, { align: 'center' });
-      y += 5;
-    }
-    pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(13);
-    pdf.text('PAYMENT RECEIPT', pageWidth / 2, y + 2, { align: 'center' });
-    y += 10;
-
-    pdf.setFont('helvetica', 'normal');
-    pdf.setFontSize(10);
-    pdf.text(`Order: ${order.id}`, margin, y);
-    pdf.text(`Date: ${new Date(order.date).toLocaleString()}`, margin, y + 6);
-    pdf.text(`Customer: ${order.customer}`, margin, y + 12);
-    pdf.text(`Cashier: ${currentUser?.fullName || 'Staff'} (${currentUser?.role || 'Cashier'})`, margin, y + 18);
-    y += 26;
-
-    pdf.setFont('helvetica', 'bold');
-    pdf.text('Item', margin, y);
-    pdf.text('Qty', pageWidth - 76, y, { align: 'right' });
-    pdf.text('Price', pageWidth - 48, y, { align: 'right' });
-    pdf.text('Amount', pageWidth - margin, y, { align: 'right' });
-    y += 3;
-    pdf.line(margin, y, pageWidth - margin, y);
-    y += 7;
-
-    pdf.setFont('helvetica', 'normal');
-    for (const item of order.cartItems || []) {
-      if (y > 265) {
-        pdf.addPage();
-        y = 20;
+  // Generates an 80mm receipt PDF and opens it in a browser tab (no auto print dialog).
+  // Pass a pre-opened window (opened synchronously on click) to avoid popup blockers.
+  const printReceiptPdf = useCallback(
+    async (order, preOpenedWindow = null) => {
+      if (!order) {
+        if (preOpenedWindow && !preOpenedWindow.closed) preOpenedWindow.close();
+        return;
       }
-      const itemName = pdf.splitTextToSize(item.name, pageWidth - 104);
-      pdf.text(itemName, margin, y);
-      pdf.text(String(item.quantity), pageWidth - 76, y, { align: 'right' });
-      pdf.text(`Rs. ${Number(item.price).toFixed(2)}`, pageWidth - 48, y, { align: 'right' });
-      pdf.text(`Rs. ${(Number(item.price) * item.quantity).toFixed(2)}`, pageWidth - margin, y, {
-        align: 'right',
-      });
-      y += Math.max(7, itemName.length * 5);
-    }
+      const receiptWindow = preOpenedWindow || window.open('', '_blank');
+      try {
+        if (receiptWindow && !receiptWindow.closed) {
+          receiptWindow.document.title = 'Generating receipt...';
+          receiptWindow.document.body.innerHTML = '<p style="font-family:sans-serif">Generating receipt...</p>';
+        }
+        const { jsPDF } = await import('jspdf');
 
-    y += 2;
-    pdf.line(margin, y, pageWidth - margin, y);
-    y += 8;
-    pdf.text(`Subtotal: Rs. ${Number(order.subtotal ?? order.total).toFixed(2)}`, pageWidth - margin, y, {
-      align: 'right',
-    });
-    if (Number(order.discountAmount) > 0) {
-      y += 6;
-      pdf.text(`Discount: -Rs. ${Number(order.discountAmount).toFixed(2)}`, pageWidth - margin, y, {
-        align: 'right',
-      });
-    }
-    y += 6;
-    pdf.text(`Tax (${taxRatePercent}%): Rs. ${Number(order.tax ?? 0).toFixed(2)}`, pageWidth - margin, y, {
-      align: 'right',
-    });
-    y += 6;
-    pdf.setFont('helvetica', 'bold');
-    pdf.text(`Total: Rs. ${Number(order.total).toFixed(2)}`, pageWidth - margin, y, { align: 'right' });
-    y += 10;
-    pdf.text('Payments', margin, y);
-    y += 6;
-    pdf.setFont('helvetica', 'normal');
-    for (const payment of order.payments || []) {
-      pdf.text(`${payment.method}: Rs. ${Number(payment.amount).toFixed(2)}`, margin, y);
-      y += 6;
-    }
-    if (order.cashTendered !== null && order.cashTendered !== undefined) {
-      pdf.text(`Cash received: Rs. ${Number(order.cashTendered).toFixed(2)}`, margin, y);
-      y += 6;
-      pdf.text(`Change: Rs. ${Number(order.change ?? 0).toFixed(2)}`, margin, y);
-      y += 6;
-    }
-    y += 8;
-    pdf.text(
-      storeSettings?.receiptFooterText || 'Thank you for your purchase!',
-      pageWidth / 2,
-      y,
-      { align: 'center' }
-    );
+        const money = (v) => `Rs. ${Number(v ?? 0).toFixed(2)}`;
+        const rawItems = Array.isArray(order.cartItems) ? order.cartItems : [];
+        const items =
+          rawItems.length > 0
+            ? rawItems.map((item) => {
+                const qty = Number(item.quantity ?? 1);
+                const price = Number(item.price ?? item.unitPrice ?? 0);
+                return {
+                  name: String(item.name || item.productName || 'Item'),
+                  qty,
+                  price,
+                  amount: Number(item.lineTotal ?? price * qty),
+                };
+              })
+            : [
+                {
+                  name: `Order Items (${Number(order.items || 1)})`,
+                  qty: Number(order.items || 1),
+                  price: Number(order.subtotal ?? order.total ?? 0) / Math.max(1, Number(order.items || 1)),
+                  amount: Number(order.subtotal ?? order.total ?? 0),
+                },
+              ];
+        const payments =
+          Array.isArray(order.payments) && order.payments.length > 0
+            ? order.payments
+            : [{ method: order.method || 'Cash', amount: order.total ?? 0 }];
+        const hasCash =
+          order.cashTendered !== null &&
+          order.cashTendered !== undefined &&
+          Number(order.cashTendered) > 0;
+        const discountVal = Number(order.discountAmount ?? 0);
 
-    pdf.autoPrint({ variant: 'non-conform' });
-    const receiptUrl = URL.createObjectURL(pdf.output('blob'));
-    if (!receiptWindow) {
-      pdf.save(`${order.id}-receipt.pdf`);
-      URL.revokeObjectURL(receiptUrl);
-      return;
-    }
-    receiptWindow.location.href = receiptUrl;
-    window.setTimeout(() => URL.revokeObjectURL(receiptUrl), 60000);
-  };
+        const W = 80;
+        const M = 4;
+        const R = W - M;
+        const nameWidth = 38;
+        const footer = storeSettings?.receiptFooterText || 'Thank you for your purchase!';
+
+        // Measure with a scratch doc to compute wrapped lines and total page height
+        const measure = new jsPDF({ unit: 'mm', format: [W, 200] });
+        measure.setFontSize(8);
+        const wrapped = items.map((it) => measure.splitTextToSize(it.name, nameWidth));
+        const footerLines = measure.splitTextToSize(footer, W - 2 * M);
+        const addrLines = measure.splitTextToSize(storeSettings?.storeAddress || '', W - 2 * M);
+        const itemLines = wrapped.reduce((n, l) => n + l.length, 0);
+        const height =
+          60 + addrLines.length * 3.6 + itemLines * 3.8 + items.length * 1 +
+          payments.length * 4 + (hasCash ? 8 : 0) + (discountVal > 0 ? 4 : 0) +
+          footerLines.length * 3.6 + 12;
+
+        const pdf = new jsPDF({ unit: 'mm', format: [W, Math.max(100, height)] });
+        let y = 8;
+        const center = (t, size = 8, bold = false) => {
+          pdf.setFont('courier', bold ? 'bold' : 'normal');
+          pdf.setFontSize(size);
+          pdf.text(t, W / 2, y, { align: 'center' });
+          y += size * 0.5;
+        };
+        const row = (l, r, bold = false) => {
+          pdf.setFont('courier', bold ? 'bold' : 'normal');
+          pdf.setFontSize(8);
+          pdf.text(l, M, y);
+          pdf.text(r, R, y, { align: 'right' });
+          y += 4;
+        };
+        const dash = () => {
+          pdf.setLineDashPattern([0.8, 0.8], 0);
+          pdf.setLineWidth(0.2);
+          pdf.line(M, y, R, y);
+          pdf.setLineDashPattern([], 0);
+          y += 3.5;
+        };
+
+        center(
+          `${storeSettings?.storeName || 'POS MANAGEMENT SYSTEM'}${
+            storeSettings?.branchCode ? ` (${storeSettings.branchCode})` : ''
+          }`,
+          11,
+          true
+        );
+        y += 1;
+        for (const line of addrLines) {
+          center(line, 7.5);
+          y -= 0.2;
+        }
+        if (storeSettings?.phone) center(`Tel: ${storeSettings.phone}`, 7.5);
+        y += 1;
+        center(order.status === 'Refunded' ? '*** REFUND RECEIPT ***' : 'SALES RECEIPT', 9, true);
+        y += 1;
+        dash();
+        row('Invoice:', String(order.id || order.orderNumber || ''), true);
+        row('Date:', (order.date ? new Date(order.date) : new Date()).toLocaleString());
+        row('Customer:', String(order.customer || order.customerName || 'Walk-in'));
+        row('Cashier:', `${currentUser?.fullName || 'Staff'}`);
+        row('Status:', String(order.status || 'Completed'));
+        dash();
+
+        pdf.setFont('courier', 'bold');
+        pdf.setFontSize(8);
+        pdf.text('Item', M, y);
+        pdf.text('Qty', 52, y, { align: 'right' });
+        pdf.text('Price', 65, y, { align: 'right' });
+        pdf.text('Total', R, y, { align: 'right' });
+        y += 4;
+        pdf.setFont('courier', 'normal');
+        items.forEach((it, i) => {
+          pdf.text(wrapped[i], M, y);
+          pdf.text(String(it.qty), 52, y, { align: 'right' });
+          pdf.text(it.price.toFixed(2), 65, y, { align: 'right' });
+          pdf.text(it.amount.toFixed(2), R, y, { align: 'right' });
+          y += wrapped[i].length * 3.8 + 1;
+        });
+        dash();
+
+        row('Subtotal', money(order.subtotal ?? order.total));
+        if (discountVal > 0) row('Discount', `-${money(discountVal)}`);
+        row(`Tax (${taxRatePercent}%)`, money(order.tax));
+        row('TOTAL', money(order.total), true);
+        dash();
+        pdf.setFont('courier', 'bold');
+        pdf.setFontSize(8);
+        pdf.text('Payment Details:', M, y);
+        y += 4;
+        payments.forEach((p) => row(String(p.method || p.paymentMethod || 'Payment'), money(p.amount)));
+        if (hasCash) {
+          row('Cash Tendered', money(order.cashTendered));
+          row('Change Given', money(order.change));
+        }
+        dash();
+        for (const line of footerLines) center(line, 7.5);
+
+        const url = URL.createObjectURL(pdf.output('blob'));
+        if (receiptWindow && !receiptWindow.closed) {
+          receiptWindow.location.href = url;
+        } else {
+          // Popup blocked: fall back to downloading the PDF
+          pdf.save(`${order.id || 'receipt'}.pdf`);
+        }
+        window.setTimeout(() => URL.revokeObjectURL(url), 5 * 60 * 1000);
+      } catch (err) {
+        console.error('Receipt PDF error:', err);
+        if (receiptWindow && !receiptWindow.closed) receiptWindow.close();
+        alert('Unable to generate receipt PDF.');
+      }
+    },
+    [storeSettings, currentUser, taxRatePercent]
+  );
 
   const handleCheckout = async (
     method,
@@ -325,8 +381,21 @@ function App() {
     cashDetails = null
   ) => {
     if (cart.length === 0 || checkingOut) return;
+    // Open the receipt tab synchronously (inside the click) so popup blockers allow it
+    const receiptTab = window.open('', '_blank');
+    if (receiptTab) {
+      receiptTab.document.title = 'Processing sale...';
+      receiptTab.document.body.innerHTML = '<p style="font-family:sans-serif">Processing sale...</p>';
+    }
     setCheckingOut(true);
     try {
+      const invoicedItems = cart.map(({ id, name, price, quantity }) => ({
+        id,
+        name,
+        price,
+        quantity,
+      }));
+
       const savedOrder = await posApi.createOrder({
         customerCode: selectedCustomerId || null,
         discountCode: selectedDiscountCode || null,
@@ -334,20 +403,42 @@ function App() {
         cashierUserId: currentUser?.id ?? 3,
         cashTendered: cashDetails?.tendered ?? null,
         change: cashDetails?.change ?? 0,
-        cartItems: cart.map(({ id, name, price, quantity }) => ({
-          id,
-          name,
-          price,
-          quantity,
-        })),
+        cartItems: invoicedItems,
         payments,
       });
 
+      // Immediately reflect the stock reduction on screen and sync with SQL Server
+      setProducts((prev) =>
+        prev.map((prod) => {
+          const sold = invoicedItems.find((item) => item.id === prod.id);
+          return sold
+            ? { ...prod, stock: Math.max(0, Number(prod.stock) - Number(sold.quantity)) }
+            : prod;
+        })
+      );
+
       setCart([]);
       setSelectedDiscountCode('');
+      // Print receipt immediately in low-power non-blocking mode and refresh DB data in parallel
+      printReceiptPdf(
+        {
+        ...savedOrder,
+        cartItems:
+          savedOrder?.cartItems?.length > 0
+            ? savedOrder.cartItems
+            : invoicedItems,
+        payments:
+          savedOrder?.payments?.length > 0
+            ? savedOrder.payments
+            : payments,
+        cashTendered: savedOrder?.cashTendered ?? cashDetails?.tendered ?? null,
+        change: savedOrder?.change ?? cashDetails?.change ?? 0,
+        },
+        receiptTab
+      );
       await loadDatabaseData();
-      await printReceiptPdf(savedOrder);
     } catch (err) {
+      if (receiptTab && !receiptTab.closed) receiptTab.close();
       alert(err.message || 'Checkout failed.');
     } finally {
       setCheckingOut(false);
@@ -415,6 +506,11 @@ function App() {
 
   const handleCreateCategory = async (payload) => {
     await posApi.createCategory(payload);
+    await loadDatabaseData();
+  };
+
+  const handleCreateStockAdjustment = async (payload) => {
+    await posApi.createStockAdjustment(payload);
     await loadDatabaseData();
   };
 
@@ -526,10 +622,13 @@ function App() {
         <ProductsView
           products={products}
           categories={categories}
+          stockAdjustments={stockAdjustments}
+          currentUser={currentUser}
           onCreateProduct={handleCreateProduct}
           onUpdateProduct={handleUpdateProduct}
           onDeleteProduct={handleDeleteProduct}
           onCreateCategory={handleCreateCategory}
+          onCreateStockAdjustment={handleCreateStockAdjustment}
         />
       ) : activeTab === 'Orders' ? (
         <OrdersView

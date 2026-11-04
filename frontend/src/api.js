@@ -65,6 +65,14 @@ export const posApi = {
       body: JSON.stringify(payload),
     }),
 
+  // Goods Received from Production (GRN) & Stock Adjustment Notes (Admin Exclusive)
+  getStockAdjustments: () => request('/api/stock-adjustments'),
+  createStockAdjustment: (payload) =>
+    request('/api/stock-adjustments', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
   // Customers & Loyalty
   getCustomers: () => request('/api/customers'),
   createCustomer: (payload) =>

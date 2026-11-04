@@ -23,7 +23,7 @@ public record UpsertProductRequest(
     string Category,
     decimal Price,
     decimal CostPrice,
-    int Stock,
+    int? Stock,
     int ReorderLevel,
     string? Icon,
     string? Color
@@ -158,5 +158,36 @@ public record CreateUserRequest(
     string Email,
     string Password,
     string Role
+);
+
+public record StockAdjustmentDto(
+    int Id,
+    string NoteNumber,
+    string NoteType,
+    int ProductId,
+    string ProductName,
+    string Sku,
+    int PreviousStock,
+    int QuantityChange,
+    int NewStock,
+    string? BatchReference,
+    string? Remarks,
+    string CreatedByUsername,
+    DateTime CreatedAt
+);
+
+public record StockAdjustmentLineRequest(
+    int ProductId,
+    int Quantity
+);
+
+public record CreateStockAdjustmentRequest(
+    string NoteType,
+    string? BatchReference,
+    string? Remarks,
+    int? UserId,
+    string? Username,
+    string? UserRole,
+    List<StockAdjustmentLineRequest> Items
 );
 

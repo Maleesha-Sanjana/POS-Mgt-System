@@ -22,6 +22,7 @@ public class PosDbContext : DbContext
     public DbSet<OrderPayment> OrderPayments => Set<OrderPayment>();
     public DbSet<Refund> Refunds => Set<Refund>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<StockAdjustmentNote> StockAdjustmentNotes => Set<StockAdjustmentNote>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
